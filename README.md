@@ -192,6 +192,27 @@ makes in `findMovement`.
 Across the 49 projects that ship a cache: 10,597 clips, 6,725 motion entries,
 2,632 of them travelling and 511 turning.
 
+A great many clips are named after the animation they play — `TurnCannedL180`
+plays `turncannedl180.hkx` — so `MotionSamples.Find` pairs the two by name
+within the project's own folder, and `CorpusMotionTests` puts the pairs through
+the writer and reads them back off the disk. That is what tests the feature
+against motion someone authored rather than motion invented in a fixture: clips
+that turn a full 180, that sprint 2,000 units, that spin without travelling at
+all.
+
+Setting `HKFBX_SAMPLES` alongside `HKFBX_CORPUS` keeps the results and widens
+the run to one clip from every project that has any:
+
+```
+HKFBX_CORPUS=~/Dev/BSAFileExtractor/extracted/meshes \
+HKFBX_SAMPLES=~/Dev/hkfbx-samples/rootmotion \
+  dotnet test --filter MotionAndEventsSurviveRealAnimations
+```
+
+That writes 42 files in about half a minute. Without it a spread of eight goes
+to a temporary directory and is deleted, which keeps a normal run at a couple
+of seconds. Either way it is the test doing it; there is no export tool.
+
 ## Events
 
 An animation announces events as it plays — a footstep, a hit, the end of a clip
