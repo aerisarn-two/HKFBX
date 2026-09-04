@@ -50,3 +50,22 @@ public sealed class CorpusFactAttribute : FactAttribute
             Skip = $"set {Corpus.EnvVar} to a directory of .hkx files to run this";
     }
 }
+
+/// <summary>
+/// Skips a test when the Autodesk-written reference file is not to hand.
+/// </summary>
+/// <remarks>
+/// "Shoved Reaction With Spin.fbx" is a Mixamo export, and the file the writer's
+/// conventions were debugged against. It is not in this repository.
+/// </remarks>
+public sealed class ReferenceFbxFactAttribute : FactAttribute
+{
+    public static string Path_ => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Dev", "hkfbx-samples", "Shoved Reaction With Spin.fbx");
+
+    public ReferenceFbxFactAttribute()
+    {
+        if (!File.Exists(Path_)) Skip = "the reference fbx is not present";
+    }
+}

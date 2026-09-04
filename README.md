@@ -89,6 +89,35 @@ Two consequences worth knowing:
   keys only the bones it moved leaves behind. Without that the skeleton
   collapses to the origin when the animation is applied.
 
+## Format conventions
+
+The first version of the writer produced files that imported as a correct
+skeleton which would not move. Everything parsed, the hierarchy was right, every
+curve was present, and nothing played. The conventions below are why, and each
+is now pinned by a test in `FbxConventionTests`:
+
+- **`Definitions` comes before `Objects`.** A reader sizes its tables from it
+  before it reaches the objects it describes.
+- **Objects carry the short class alias in their `Class::Name` prefix**, not the
+  record's own name: `AnimStack::`, `AnimLayer::`, `AnimCurveNode::`,
+  `AnimCurve::`. Readers key off the prefix.
+- **`Documents` names the stack to play** through `ActiveAnimStackName`. Without
+  it a file can hold a perfectly good take and open showing nothing moving.
+- **`TimeMode` is 6**, `eFrames30`. The enum is not a frame rate — 11 is
+  `eFrames24`.
+- **Models carry `Version` 232**, and their `Lcl` properties are flagged `A+`,
+  animatable *and animated*. `A` alone lets a reader ignore the curve.
+- **A `Takes` list** is still consulted by some readers.
+
+They were found by diffing against a file that works — a Mixamo export — rather
+than by reading the specification, and the test suite compares against it
+directly when it is to hand.
+
+The axis convention and rotation order are cross-checked against ck-cmd, which
+does the same job in C++ through the FBX SDK: Z-up right-handed
+(`FbxAxisSystem::Max`), centimetres, and Euler XYZ static in degrees
+(`Eul_FromQuat(q, EulOrdXYZs)`).
+
 ## Status
 
 The loop is closed: hkx to FBX to hkx, checked against real animations. A
@@ -96,7 +125,5 @@ chicken animation goes out as 33 tracks over 33 bones and comes back within
 0.01 on both translation and rotation, and an hkx written from recompressed
 curves reads back and samples the same.
 
-Still open: nobody has opened one of these files in Blender. The structure is
-asserted by the tests, but the axis convention and rotation order are
-reasoned-about rather than confirmed, and that is worth doing before building
-much on top.
+The reader also parses a file this project had no hand in writing, which is what
+keeps it honest about being more than the writer's mirror.

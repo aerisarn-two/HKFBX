@@ -97,7 +97,10 @@ public class FbxAnimationWriterTests
         FbxNode stack = Assert.Single(ObjectsOf(document, "AnimationStack"));
         FbxNode layer = Assert.Single(ObjectsOf(document, "AnimationLayer"));
 
-        Assert.Equal("AnimationStack::take", stack.Properties[1]);
+        // Autodesk writes the short class alias in the Class::Name prefix, not
+        // the record's own name, and readers key off it.
+        Assert.Equal("AnimStack::take", stack.Properties[1]);
+        Assert.Equal("AnimLayer::Default", layer.Properties[1]);
 
         long stackId = Convert.ToInt64(stack.Properties[0]);
         long layerId = Convert.ToInt64(layer.Properties[0]);

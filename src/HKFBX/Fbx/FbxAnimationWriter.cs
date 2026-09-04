@@ -37,6 +37,30 @@ public static class FbxAnimationWriter
 
     private static readonly string[] Axes = ["d|X", "d|Y", "d|Z"];
 
+    /// <summary>
+    /// The name an object's <c>Class::Name</c> prefix uses, which is not always
+    /// the record's own name. Autodesk writes <c>AnimStack::</c> over an
+    /// <c>AnimationStack</c> record, and readers key off the prefix, so getting
+    /// this wrong produces a file whose animation is present and inert.
+    /// </summary>
+    private static readonly Dictionary<string, string> ClassAliases = new()
+    {
+        ["AnimationStack"] = "AnimStack",
+        ["AnimationLayer"] = "AnimLayer",
+        ["AnimationCurveNode"] = "AnimCurveNode",
+        ["AnimationCurve"] = "AnimCurve",
+    };
+
+    private static FbxObject Add(FbxScene scene, string className, string name, string subClass)
+    {
+        FbxObject o = scene.AddObject(className, name, subClass);
+
+        if (ClassAliases.TryGetValue(className, out string? alias))
+            o.QualifiedName = $"{alias}::{name}";
+
+        return o;
+    }
+
     public static long ToFbxTime(float seconds) => (long)MathF.Round(seconds * TimeUnitsPerSecond);
 
     /// <summary>
@@ -48,15 +72,27 @@ public static class FbxAnimationWriter
         ArgumentNullException.ThrowIfNull(skeleton);
         ArgumentNullException.ThrowIfNull(animation);
 
-        FbxDocument document = NewDocument();
+        FbxDocument document = NewDocument(takeName, ToFbxTime(animation.Duration));
         var scene = new FbxScene(document);
 
         FbxObject[] models = AddSkeleton(scene, skeleton);
         AddAnimation(scene, skeleton, models, animation, takeName);
 
         // Writes the objects and connections into the document and refreshes the
-        // Definitions counts, which readers use to size their tables.
+        // Definitions counts.
         scene.Flush();
+
+        // Flush appends Definitions, but a reader sizes its tables from it before
+        // it reaches Objects, so it has to come first.
+        FbxNode? definitions = document["Definitions"];
+        if (definitions is not null)
+        {
+            document.Nodes.Remove(definitions);
+            int objects = document.Nodes.FindIndex(n => n.Name == "Objects");
+            document.Nodes.Insert(objects < 0 ? document.Nodes.Count : objects, definitions);
+        }
+
+        AddTakes(document, takeName, ToFbxTime(animation.Duration));
 
         return document;
     }
@@ -65,13 +101,14 @@ public static class FbxAnimationWriter
     /// The records every reader expects before it will look at the rest: a header
     /// with a timestamp, the axis convention, and the tick rate.
     /// </summary>
-    private static FbxDocument NewDocument()
+    private static FbxDocument NewDocument(string takeName, long stop)
     {
         var document = new FbxDocument { Version = FbxVersion.v7400 };
 
         var header = new FbxNode("FBXHeaderExtension");
         header.Nodes.Add(new FbxNode("FBXHeaderVersion", 1003));
         header.Nodes.Add(new FbxNode("FBXVersion", (int)FbxVersion.v7400));
+        header.Nodes.Add(new FbxNode("EncryptionType", 0));
 
         // Not decoration: readers reject a header without a timestamp.
         DateTime now = DateTime.Now;
@@ -88,7 +125,34 @@ public static class FbxAnimationWriter
 
         header.Nodes.Add(new FbxNode("Creator", "HKFBX"));
         document.Nodes.Add(header);
+
+        document.Nodes.Add(new FbxNode("CreationTime", now.ToString("yyyy-MM-dd HH:mm:ss:fff")));
         document.Nodes.Add(new FbxNode("Creator", "HKFBX"));
+
+        //
+        // The scene document. A viewer reads ActiveAnimStackName to decide which
+        // take to play, so a file without one can hold a perfectly good animation
+        // and still open showing nothing moving.
+        //
+        var documents = new FbxNode("Documents");
+        documents.Nodes.Add(new FbxNode("Count", 1));
+
+        var scene = new FbxNode("Document");
+        scene.Properties.Add(1L);
+        scene.Properties.Add("");
+        scene.Properties.Add("Scene");
+
+        var sceneProperties = new FbxNode("Properties70");
+        scene.Nodes.Add(sceneProperties);
+        var sceneSettings = new FbxProperties(sceneProperties);
+        sceneSettings.Set("SourceObject", "object", "", "");
+        sceneSettings.Set("ActiveAnimStackName", "KString", "", "", takeName);
+
+        scene.Nodes.Add(new FbxNode("RootNode", 0L));
+        documents.Nodes.Add(scene);
+        document.Nodes.Add(documents);
+
+        document.Nodes.Add(new FbxNode("References"));
 
         var settings = new FbxNode("GlobalSettings");
         settings.Nodes.Add(new FbxNode("Version", 1000));
@@ -106,11 +170,21 @@ public static class FbxAnimationWriter
         globals.Set("FrontAxisSign", "int", "Integer", "", -1);
         globals.Set("CoordAxis", "int", "Integer", "", 0);
         globals.Set("CoordAxisSign", "int", "Integer", "", 1);
+        globals.Set("OriginalUpAxis", "int", "Integer", "", 2);
+        globals.Set("OriginalUpAxisSign", "int", "Integer", "", 1);
         globals.Set("UnitScaleFactor", "double", "Number", "", 1.0);
+        globals.Set("OriginalUnitScaleFactor", "double", "Number", "", 1.0);
 
-        // 11 is FbxTime::eFrames30. Havok animations are authored at 30fps and
-        // frameDuration confirms it, so the timeline lines up with the keys.
-        globals.Set("TimeMode", "enum", "", "", 11);
+        // 6 is FbxTime::eFrames30, which is what Havok animations are authored
+        // at. 11 is eFrames24 -- the enum is not a frame rate, and reading it as
+        // one plays everything at the wrong speed.
+        globals.Set("TimeMode", "enum", "", "", 6);
+        globals.Set("TimeProtocol", "enum", "", "", 2);
+
+        // The timeline a viewer opens on. Without it the take exists but the
+        // scrubber has nothing to scrub.
+        globals.Set("TimeSpanStart", "KTime", "Time", "", 0L);
+        globals.Set("TimeSpanStop", "KTime", "Time", "", stop);
 
         document.Nodes.Add(settings);
 
@@ -130,24 +204,43 @@ public static class FbxAnimationWriter
             Bone bone = skeleton.Bones[i];
 
             FbxObject model = scene.AddObject("Model", bone.Name, "LimbNode");
+
+            // 232 is the Model record version every 7.x writer stamps. Readers
+            // check it before trusting the properties that follow.
+            model.Node.Nodes.Add(new FbxNode("Version", 232));
+
             var properties = new FbxProperties(EnsureProperties70(model.Node));
 
             Vector3 euler = ToDegrees(bone.ReferencePose.ToEulerXyz());
 
-            properties.Set("Lcl Translation", "Lcl Translation", "", "A",
+            properties.Set("RotationActive", "bool", "", "", 1);
+            properties.Set("InheritType", "enum", "", "", 1);
+            properties.Set("ScalingMax", "Vector3D", "Vector", "", 0.0, 0.0, 0.0);
+            properties.Set("DefaultAttributeIndex", "int", "Integer", "", 0);
+
+            // "A+" means animatable and animated. "A" alone says a curve may
+            // exist; a reader is entitled to ignore one when the property does
+            // not admit to having it.
+            properties.Set("Lcl Translation", "Lcl Translation", "", "A+",
                 (double)bone.ReferencePose.Translation.X,
                 (double)bone.ReferencePose.Translation.Y,
                 (double)bone.ReferencePose.Translation.Z);
-            properties.Set("Lcl Rotation", "Lcl Rotation", "", "A",
+            properties.Set("Lcl Rotation", "Lcl Rotation", "", "A+",
                 (double)euler.X, (double)euler.Y, (double)euler.Z);
-            properties.Set("Lcl Scaling", "Lcl Scaling", "", "A",
+            properties.Set("Lcl Scaling", "Lcl Scaling", "", "A+",
                 (double)bone.ReferencePose.Scale.X,
                 (double)bone.ReferencePose.Scale.Y,
                 (double)bone.ReferencePose.Scale.Z);
 
+            // FBX's boolean-as-char type, written as 'Y'. A real bool is not a
+            // property type the format has.
+            model.Node.Nodes.Add(new FbxNode("Shading", 'Y'));
+            model.Node.Nodes.Add(new FbxNode("Culling", "CullingOff"));
+
             // Without a skeleton attribute an importer treats these as plain
-            // nulls, and no armature comes out the other side.
-            FbxObject attribute = scene.AddObject("NodeAttribute", bone.Name, "LimbNode");
+            // nulls, and no armature comes out the other side. The name is left
+            // empty, as Autodesk writes it -- the model carries the name.
+            FbxObject attribute = scene.AddObject("NodeAttribute", string.Empty, "LimbNode");
             attribute.Node.Nodes.Add(new FbxNode("TypeFlags", "Skeleton"));
             scene.Connect(attribute, model);
 
@@ -169,16 +262,18 @@ public static class FbxAnimationWriter
         FbxScene scene, Skeleton skeleton, FbxObject[] models,
         SampledAnimation animation, string takeName)
     {
-        FbxObject stack = scene.AddObject("AnimationStack", takeName, string.Empty);
+        FbxObject stack = Add(scene, "AnimationStack", takeName, string.Empty);
         var stackProperties = new FbxProperties(EnsureProperties70(stack.Node));
 
         long stop = ToFbxTime(animation.Duration);
+        stackProperties.Set("LocalStart", "KTime", "Time", "", 0L);
         stackProperties.Set("LocalStop", "KTime", "Time", "", stop);
+        stackProperties.Set("ReferenceStart", "KTime", "Time", "", 0L);
         stackProperties.Set("ReferenceStop", "KTime", "Time", "", stop);
 
         scene.ConnectToRoot(stack);
 
-        FbxObject layer = scene.AddObject("AnimationLayer", "Default", string.Empty);
+        FbxObject layer = Add(scene, "AnimationLayer", "Default", string.Empty);
         scene.Connect(layer, stack);
 
         var times = new long[animation.FrameCount];
@@ -235,7 +330,7 @@ public static class FbxAnimationWriter
         FbxScene scene, FbxObject layer, FbxObject model,
         string property, string channel, long[] times, float[][] values)
     {
-        FbxObject node = scene.AddObject("AnimationCurveNode", channel, string.Empty);
+        FbxObject node = Add(scene, "AnimationCurveNode", channel, string.Empty);
         var properties = new FbxProperties(EnsureProperties70(node.Node));
 
         for (int axis = 0; axis < 3; axis++)
@@ -265,7 +360,7 @@ public static class FbxAnimationWriter
     /// </remarks>
     private static FbxObject AddCurve(FbxScene scene, long[] times, float[] values)
     {
-        FbxObject curve = scene.AddObject("AnimationCurve", string.Empty, string.Empty);
+        FbxObject curve = Add(scene, "AnimationCurve", string.Empty, string.Empty);
         FbxNode node = curve.Node;
 
         node.Nodes.Add(new FbxNode("Default", values.Length > 0 ? (double)values[0] : 0.0));
@@ -280,6 +375,32 @@ public static class FbxAnimationWriter
         node.Nodes.Add(new FbxNode("KeyAttrRefCount", new[] { values.Length }));
 
         return curve;
+    }
+
+    /// <summary>
+    /// The take list, which predates AnimationStack and which some readers still
+    /// consult to find the timeline.
+    /// </summary>
+    private static void AddTakes(FbxDocument document, string takeName, long stop)
+    {
+        var takes = new FbxNode("Takes");
+        takes.Nodes.Add(new FbxNode("Current", takeName));
+
+        var take = new FbxNode("Take", takeName);
+        take.Nodes.Add(new FbxNode("FileName", takeName + ".tak"));
+
+        var local = new FbxNode("LocalTime");
+        local.Properties.Add(0L);
+        local.Properties.Add(stop);
+        take.Nodes.Add(local);
+
+        var reference = new FbxNode("ReferenceTime");
+        reference.Properties.Add(0L);
+        reference.Properties.Add(stop);
+        take.Nodes.Add(reference);
+
+        takes.Nodes.Add(take);
+        document.Nodes.Add(takes);
     }
 
     private static FbxNode EnsureProperties70(FbxNode node)
