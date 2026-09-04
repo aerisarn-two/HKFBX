@@ -141,3 +141,41 @@ public class FbxConventionTests
         Assert.Equal("mixamo.com", FbxAnimationReader.ReadTakeName(document));
     }
 }
+
+/// <summary>
+/// ck-cmd escapes the characters Skyrim bone names carry and several tools will
+/// not keep. Reading undoes it either way round.
+/// </summary>
+public class BoneNamingTests
+{
+    [Theory]
+    [InlineData("NPC Root [Root]", "NPC_s_Root_s__ob_Root_cb_")]
+    [InlineData("NPC L Finger02 [LF02]", "NPC_s_L_s_Finger02_s__ob_LF02_cb_")]
+    [InlineData("mixamorig:Hips", "mixamorig_dd_Hips")]
+    [InlineData("Bip01", "Bip01")]
+    public void MatchesCkCmdsEscaping(string havok, string escaped)
+    {
+        Assert.Equal(escaped, BoneNames.Sanitize(havok));
+        Assert.Equal(havok, BoneNames.Unsanitize(escaped));
+    }
+
+    [Fact]
+    public void ReadingUndoesTheEscapingWhicheverWayItWasWritten()
+    {
+        foreach (BoneNaming naming in new[] { BoneNaming.Havok, BoneNaming.CkCmd })
+        {
+            FbxDocument document = FbxAnimationWriter.Build(
+                Synthetic.Skeleton(), Synthetic.Animation(), "take", naming);
+
+            using var stream = new MemoryStream();
+            document.Save(stream);
+            stream.Position = 0;
+
+            Model.Skeleton read = FbxAnimationReader.ReadSkeleton(FbxDocument.Load(stream));
+
+            Assert.Equal(
+                Synthetic.Skeleton().Bones.Select(b => b.Name),
+                read.Bones.Select(b => b.Name));
+        }
+    }
+}

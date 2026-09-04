@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="HKX2" Version="1.0.0" />
-    <PackageReference Include="LeanMeshIO" Version="1.0.1" />
+    <PackageReference Include="LeanMeshIO" Version="1.0.2" />
     <!--
       Ships mopper.exe and copies it beside the build output. Havok's spline
       codec is proprietary and this is the only credible encoder for it.

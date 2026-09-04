@@ -67,7 +67,9 @@ public static class FbxAnimationWriter
     /// Builds a document holding the skeleton as a node hierarchy and the
     /// animation as one stack of curves over it.
     /// </summary>
-    public static FbxDocument Build(Skeleton skeleton, SampledAnimation animation, string takeName)
+    public static FbxDocument Build(
+        Skeleton skeleton, SampledAnimation animation, string takeName,
+        BoneNaming naming = BoneNaming.Havok)
     {
         ArgumentNullException.ThrowIfNull(skeleton);
         ArgumentNullException.ThrowIfNull(animation);
@@ -75,7 +77,7 @@ public static class FbxAnimationWriter
         FbxDocument document = NewDocument(takeName, ToFbxTime(animation.Duration));
         var scene = new FbxScene(document);
 
-        FbxObject[] models = AddSkeleton(scene, skeleton);
+        FbxObject[] models = AddSkeleton(scene, skeleton, naming);
         AddAnimation(scene, skeleton, models, animation, takeName);
 
         // Writes the objects and connections into the document and refreshes the
@@ -199,7 +201,7 @@ public static class FbxAnimationWriter
     /// One Model per bone, parented as the skeleton says, each carrying its rest
     /// pose as its local transform.
     /// </summary>
-    private static FbxObject[] AddSkeleton(FbxScene scene, Skeleton skeleton)
+    private static FbxObject[] AddSkeleton(FbxScene scene, Skeleton skeleton, BoneNaming naming)
     {
         var models = new FbxObject[skeleton.Count];
 
@@ -207,7 +209,7 @@ public static class FbxAnimationWriter
         {
             Bone bone = skeleton.Bones[i];
 
-            FbxObject model = scene.AddObject("Model", bone.Name, "LimbNode");
+            FbxObject model = scene.AddObject("Model", BoneNames.Apply(bone.Name, naming), "LimbNode");
 
             // 232 is the Model record version every 7.x writer stamps. Readers
             // check it before trusting the properties that follow.
@@ -275,10 +277,17 @@ public static class FbxAnimationWriter
         stackProperties.Set("ReferenceStart", "KTime", "Time", "", 0L);
         stackProperties.Set("ReferenceStop", "KTime", "Time", "", stop);
 
-        scene.ConnectToRoot(stack);
+        // Deliberately not connected to the root node. A stack belongs to the
+        // scene, and hanging it off node 0 makes it a child of the root node
+        // instead -- which readers accept, and which quietly costs the layer its
+        // members, so the animation is present and drives nothing.
 
         FbxObject layer = Add(scene, "AnimationLayer", "Default", string.Empty);
         scene.Connect(layer, stack);
+
+        // Layer membership is written after every binding, the way Autodesk
+        // writes it, rather than interleaved with them.
+        var curveNodes = new List<FbxObject>();
 
         var times = new long[animation.FrameCount];
         for (int f = 0; f < animation.FrameCount; f++) times[f] = ToFbxTime(animation.TimeOf(f));
@@ -321,17 +330,19 @@ public static class FbxAnimationWriter
                 scale[2][f] = t.Scale.Z;
             }
 
-            AddChannel(scene, layer, models[bone], "Lcl Translation", "T", times, translation);
-            AddChannel(scene, layer, models[bone], "Lcl Rotation", "R", times, rotation);
-            AddChannel(scene, layer, models[bone], "Lcl Scaling", "S", times, scale);
+            curveNodes.Add(AddChannel(scene, models[bone], "Lcl Translation", "T", times, translation));
+            curveNodes.Add(AddChannel(scene, models[bone], "Lcl Rotation", "R", times, rotation));
+            curveNodes.Add(AddChannel(scene, models[bone], "Lcl Scaling", "S", times, scale));
         }
+
+        foreach (FbxObject node in curveNodes) scene.Connect(node, layer);
     }
 
     /// <summary>
     /// One curve node for a property, with a curve under it per component.
     /// </summary>
-    private static void AddChannel(
-        FbxScene scene, FbxObject layer, FbxObject model,
+    private static FbxObject AddChannel(
+        FbxScene scene, FbxObject model,
         string property, string channel, long[] times, float[][] values)
     {
         FbxObject node = Add(scene, "AnimationCurveNode", channel, string.Empty);
@@ -345,7 +356,6 @@ public static class FbxAnimationWriter
             properties.Set(Axes[axis], "Number", string.Empty, "A", first);
         }
 
-        scene.Connect(node, layer);
         scene.ConnectToProperty(node, model, property);
 
         for (int axis = 0; axis < 3; axis++)
@@ -353,6 +363,8 @@ public static class FbxAnimationWriter
             FbxObject curve = AddCurve(scene, times, values[axis]);
             scene.ConnectToProperty(curve, node, Axes[axis]);
         }
+
+        return node;
     }
 
     /// <summary>Writes one component's keys as an <c>AnimationCurve</c>.</summary>

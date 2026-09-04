@@ -76,7 +76,9 @@ public static class FbxAnimationReader
                 ? index
                 : -1;
 
-            bones.Add(new Bone(model.Name, parentIndex, LocalTransformOf(model)));
+            // Undone unconditionally: a name with no marker is unchanged, so a
+            // file written either way comes back with Havok's spelling.
+            bones.Add(new Bone(BoneNames.Unsanitize(model.Name), parentIndex, LocalTransformOf(model)));
         }
 
         return new Skeleton { Name = name, Bones = bones };
@@ -100,7 +102,7 @@ public static class FbxAnimationReader
         var scene = new FbxScene(document);
 
         var models = SkeletonModels(scene)
-            .GroupBy(m => m.Name)
+            .GroupBy(m => BoneNames.Unsanitize(m.Name))
             .ToDictionary(g => g.Key, g => g.First());
 
         // Curve nodes reach their model through an object-to-property edge, so

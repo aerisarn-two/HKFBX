@@ -113,14 +113,27 @@ They were found by diffing against a file that works — a Mixamo export — rat
 than by reading the specification, and the test suite compares against it
 directly when it is to hand.
 
-Two more lived a level down, in the binary container rather than the records,
-and are fixed in LeanMeshIO 1.0.1: a missing `FileId`, and a missing null record
-after an empty node. Either one gets a file rejected outright by the Autodesk
-FBX SDK, which reports the whole file as corrupted and names nothing.
+Three more lived a level down, in the binary container rather than the records,
+and are fixed in LeanMeshIO 1.0.2: a missing `FileId`, a missing null record
+after an empty node, and a missing null record after an object record with no
+children. The first two get the file rejected outright. The third is worse — the
+file loads, the skeleton is right, and the animation layer comes back with no
+members, so every curve is present and drives nothing.
 
 Output is verified against that SDK rather than against this project's own
-reader. All 45 sample conversions load, with their skeleton and their animation
-stack intact.
+reader: all 45 sample conversions load, and 44 of them animate. The one that
+does not is a two-bone light whose motion is translation only.
+
+## Bone names
+
+Skyrim's bone names carry spaces, brackets and colons — `NPC L Finger02 [LF02]`
+— and several 3D applications will not round trip them, so ck-cmd substitutes a
+marker for each: `_s_`, `_ob_`, `_cb_`, `_dd_`.
+
+Writing takes a `BoneNaming`: `Havok` keeps the names as they are, `CkCmd`
+escapes them. Reading undoes the escaping unconditionally, so a file written
+either way comes back with the names Havok expects, and a name carrying no
+marker is unchanged.
 
 The axis convention and rotation order are cross-checked against ck-cmd, which
 does the same job in C++ through the FBX SDK: Z-up right-handed
