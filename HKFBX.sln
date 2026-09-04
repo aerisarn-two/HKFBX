@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HKFBX", "src\\HKFBX\\HKFBX.csproj", "{1B168DBB-0B66-4ABB-AB40-B42D0E66411F}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HKFBX.Tests", "tests\\HKFBX.Tests\\HKFBX.Tests.csproj", "{71FC390A-CA72-4ADC-AF16-F847967A8D71}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1B168DBB-0B66-4ABB-AB40-B42D0E66411F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1B168DBB-0B66-4ABB-AB40-B42D0E66411F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1B168DBB-0B66-4ABB-AB40-B42D0E66411F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1B168DBB-0B66-4ABB-AB40-B42D0E66411F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{71FC390A-CA72-4ADC-AF16-F847967A8D71}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{71FC390A-CA72-4ADC-AF16-F847967A8D71}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{71FC390A-CA72-4ADC-AF16-F847967A8D71}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{71FC390A-CA72-4ADC-AF16-F847967A8D71}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
