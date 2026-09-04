@@ -12,8 +12,8 @@ one transform per bone per frame — so that is what sits in the middle.
 
 ```
     hkx ──► HKX2 ──► spline fields ──► mopper ──► samples ──► FBX stack + curves
-                                        (Havok)      │
-    hkx ◄── HKX2 ◄── spline fields ◄── mopper ◄──────┘
+                                       (Havok)                        │
+    hkx ◄── HKX2 ◄── spline fields ◄── mopper ◄── samples ◄───────────┘
 ```
 
 Going through samples also means the Havok codec and the FBX layer never have to
@@ -70,10 +70,33 @@ just the numbers.
 
 The corpus tests need real `.hkx` files and `mopper.exe`, and skip without them.
 
+## Reading FBX back
+
+`FbxAnimationReader` is the inverse, and it has to cope with files this project
+did not write — an animator's export has been through a tool that knows nothing
+about track indices or frame counts. So it assumes nothing about the keys:
+curves are sampled onto a frame grid rather than read off one key per frame,
+because an editor is free to drop keys it considers redundant, move them off
+frame boundaries, or key each component at different times.
+
+Two consequences worth knowing:
+
+- **Bones come back in depth-first order from the roots**, not in file order.
+  Havok requires a parent to precede its children and FBX promises nothing of
+  the sort, so the order is rebuilt rather than trusted. Match bones up by name,
+  not by index, when comparing against the skeleton you started with.
+- **A bone with no curves holds its rest pose**, which is what an exporter that
+  keys only the bones it moved leaves behind. Without that the skeleton
+  collapses to the origin when the animation is applied.
+
 ## Status
 
-Done: hkx to FBX, with the skeleton as a node hierarchy and the animation as one
-stack of curves over it. The Havok round trip — decompress, recompress,
-decompress — holds to about 0.002 on a real animation.
+The loop is closed: hkx to FBX to hkx, checked against real animations. A
+chicken animation goes out as 33 tracks over 33 bones and comes back within
+0.01 on both translation and rotation, and an hkx written from recompressed
+curves reads back and samples the same.
 
-Next: FBX back to hkx, which closes the loop.
+Still open: nobody has opened one of these files in Blender. The structure is
+asserted by the tests, but the axis convention and rotation order are
+reasoned-about rather than confirmed, and that is worth doing before building
+much on top.

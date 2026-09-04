@@ -133,8 +133,8 @@ public class ConversionTests
         List<FbxNode> objects = reloaded["Objects"]!.Nodes;
 
         Assert.Equal(skeleton.Count, objects.Count(n => n.Name == "Model"));
-        Assert.Single(objects.Where(n => n.Name == "AnimationStack"));
-        Assert.Single(objects.Where(n => n.Name == "AnimationLayer"));
+        Assert.Single(objects, n => n.Name == "AnimationStack");
+        Assert.Single(objects, n => n.Name == "AnimationLayer");
 
         int curveNodes = objects.Count(n => n.Name == "AnimationCurveNode");
         int curves = objects.Count(n => n.Name == "AnimationCurve");
