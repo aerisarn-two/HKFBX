@@ -70,6 +70,15 @@ namespace HKFBX.Fbx
             return (ToDouble(values[0], fallback), ToDouble(values[1], fallback), ToDouble(values[2], fallback));
         }
 
+        /// <summary>
+        /// Everything a property carries past its name, type, subtype and flags.
+        /// </summary>
+        /// <remarks>
+        /// Most properties hold one value, but an enum holds its current index
+        /// and then the list of names it can take, tilde separated.
+        /// </remarks>
+        public IReadOnlyList<object?> GetValues(string name) => ValuesOf(name);
+
         public string GetString(string name, string fallback = "")
         {
             IReadOnlyList<object?> values = ValuesOf(name);

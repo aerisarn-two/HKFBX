@@ -35,6 +35,9 @@ public static class FbxAnimationWriter
 
     private const int LinearKey = 0x00000004;
 
+    /// <summary>An event fires at a moment; it does not ease in.</summary>
+    private const int ConstantKey = 0x00000002;
+
     private static readonly string[] Axes = ["d|X", "d|Y", "d|Z"];
 
     /// <summary>
@@ -335,7 +338,139 @@ public static class FbxAnimationWriter
             curveNodes.Add(AddChannel(scene, models[bone], "Lcl Scaling", "S", times, scale));
         }
 
+        // Root motion drives the root bone instead of its own track, which is
+        // what ck-cmd does: the track animates the root in place, the motion is
+        // the travel, and a viewer wants to see the travel.
+        if (animation.RootMotion.HasMovement && models.Length > 0)
+        {
+            int root = skeleton.Roots().FirstOrDefault(-1);
+
+            if (root >= 0)
+            {
+                var translation = new float[3][];
+                var rotation = new float[3][];
+
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    translation[axis] = new float[animation.FrameCount];
+                    rotation[axis] = new float[animation.FrameCount];
+                }
+
+                for (int f = 0; f < animation.FrameCount; f++)
+                {
+                    float time = animation.TimeOf(f);
+
+                    Vector3 t = animation.RootMotion.TranslationAt(time);
+                    Vector3 euler = ToDegrees(
+                        new BoneTransform(t, animation.RootMotion.RotationAt(time), Vector3.One)
+                            .ToEulerXyz());
+
+                    translation[0][f] = t.X; translation[1][f] = t.Y; translation[2][f] = t.Z;
+                    rotation[0][f] = euler.X; rotation[1][f] = euler.Y; rotation[2][f] = euler.Z;
+                }
+
+                // Replaced rather than added to: two curve nodes on one property
+                // is a layer blend, not an override.
+                RemoveChannels(scene, curveNodes, models[root]);
+
+                curveNodes.Add(AddChannel(scene, models[root], "Lcl Translation", "T", times, translation));
+                curveNodes.Add(AddChannel(scene, models[root], "Lcl Rotation", "R", times, rotation));
+            }
+        }
+
         foreach (FbxObject node in curveNodes) scene.Connect(node, layer);
+
+        AddEvents(scene, models, skeleton, layer, animation.Annotations);
+    }
+
+    /// <summary>
+    /// Drops the translation and rotation channels already written for a model,
+    /// so root motion can take their place.
+    /// </summary>
+    private static void RemoveChannels(FbxScene scene, List<FbxObject> curveNodes, FbxObject model)
+    {
+        var bound = scene.PropertyConnectionsTo(model.Id)
+            .Where(c => c.Property is "Lcl Translation" or "Lcl Rotation")
+            .Select(c => c.Source)
+            .ToList();
+
+        foreach (FbxObject node in bound)
+        {
+            foreach (FbxObject curve in scene.PropertyConnectionsTo(node.Id).Select(c => c.Source).ToList())
+                scene.Remove(curve);
+
+            curveNodes.Remove(node);
+            scene.Remove(node);
+        }
+    }
+
+    /// <summary>
+    /// Writes the animation's events as animated enum properties on the root bone.
+    /// </summary>
+    /// <remarks>
+    /// This is ck-cmd's shape: a user-defined enum property whose values are the
+    /// texts, and a curve whose keys say when each fires. Keys are constant, an
+    /// event being a moment rather than something that eases in.
+    ///
+    /// Unlike ck-cmd, the text is stored whole. It splits a name such as
+    /// SoundPlay.NPCChickenScratch at its last capital and rebuilds it on the way
+    /// back, which does not survive every name; keeping the text intact costs
+    /// nothing and round trips.
+    /// </remarks>
+    private static void AddEvents(
+        FbxScene scene, FbxObject[] models, Skeleton skeleton, FbxObject layer,
+        IReadOnlyList<AnnotationTrack> tracks)
+    {
+        if (tracks.Count == 0 || models.Length == 0) return;
+
+        int root = skeleton.Roots().FirstOrDefault(-1);
+        if (root < 0) return;
+
+        var properties = new FbxProperties(EnsureProperties70(models[root].Node));
+
+        for (int i = 0; i < tracks.Count; i++)
+        {
+            AnnotationTrack track = tracks[i];
+            if (track.Events.Count == 0) continue;
+
+            // Distinct texts become the enum's values; a key then only has to
+            // name an index.
+            var texts = track.Events.Select(e => e.Text).Distinct().ToList();
+            string property = EventPropertyName(track.Name, i);
+
+            properties.Set(property, "enum", "", "A+", 0, string.Join('~', texts));
+
+            FbxObject node = Add(scene, "AnimationCurveNode", property, string.Empty);
+            var channel = new FbxProperties(EnsureProperties70(node.Node));
+            channel.Set("d|" + property, "Number", string.Empty, "A", 0.0);
+
+            scene.ConnectToProperty(node, models[root], property);
+            scene.Connect(node, layer);
+
+            var times = new long[track.Events.Count];
+            var values = new float[track.Events.Count];
+
+            for (int k = 0; k < track.Events.Count; k++)
+            {
+                times[k] = ToFbxTime(track.Events[k].Time);
+                values[k] = texts.IndexOf(track.Events[k].Text);
+            }
+
+            FbxObject curve = AddCurve(scene, times, values, ConstantKey);
+            scene.ConnectToProperty(curve, node, "d|" + property);
+        }
+    }
+
+    /// <summary>
+    /// The property an annotation track is written to. Prefixed the way ck-cmd
+    /// prefixes them, and made unique when a track has no name of its own.
+    /// </summary>
+    internal static string EventPropertyName(string trackName, int index)
+    {
+        string name = new string((trackName ?? string.Empty)
+            .Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray());
+
+        return "hkEvents" + (name.Length > 0 ? name : index == 0 ? "" : index.ToString());
     }
 
     /// <summary>
@@ -374,7 +509,7 @@ public static class FbxAnimationWriter
     /// saying how many consecutive keys share an entry. Every key here
     /// interpolates the same way, so there is exactly one run.
     /// </remarks>
-    private static FbxObject AddCurve(FbxScene scene, long[] times, float[] values)
+    private static FbxObject AddCurve(FbxScene scene, long[] times, float[] values, int keyFlags = LinearKey)
     {
         FbxObject curve = Add(scene, "AnimationCurve", string.Empty, string.Empty);
         FbxNode node = curve.Node;
@@ -386,7 +521,7 @@ public static class FbxAnimationWriter
 
         // Samples, not authored keys: straight lines between them are what the
         // animation already is, so there are no tangents to describe.
-        node.Nodes.Add(new FbxNode("KeyAttrFlags", new[] { LinearKey }));
+        node.Nodes.Add(new FbxNode("KeyAttrFlags", new[] { keyFlags }));
         node.Nodes.Add(new FbxNode("KeyAttrDataFloat", new[] { 0f, 0f, 0f, 0f }));
         node.Nodes.Add(new FbxNode("KeyAttrRefCount", new[] { values.Length }));
 

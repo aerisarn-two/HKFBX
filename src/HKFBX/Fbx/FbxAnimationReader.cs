@@ -172,6 +172,162 @@ public static class FbxAnimationReader
         };
     }
 
+    /// <summary>
+    /// The travel the root bone carries, read back as sparse keys.
+    /// </summary>
+    /// <remarks>
+    /// Only meaningful for a document written with root motion, or one an
+    /// animator has moved the root in. A root that merely sits at its rest pose
+    /// comes back empty rather than as a run of identical keys.
+    /// </remarks>
+    public static RootMotion ReadRootMotion(FbxDocument document, Skeleton skeleton)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(skeleton);
+
+        int root = skeleton.Roots().FirstOrDefault(-1);
+        if (root < 0) return RootMotion.None;
+
+        var scene = new FbxScene(document);
+
+        FbxObject? model = SkeletonModels(scene)
+            .FirstOrDefault(m => BoneNames.Unsanitize(m.Name) == skeleton.Bones[root].Name);
+
+        if (model is null) return RootMotion.None;
+
+        Curve[]? translation = ChannelOf(scene, model, "Lcl Translation");
+        Curve[]? rotation = ChannelOf(scene, model, "Lcl Rotation");
+
+        if (translation is null && rotation is null) return RootMotion.None;
+
+        var translations = new List<TranslationKey>();
+        var rotations = new List<RotationKey>();
+
+        foreach (float time in KeyTimes(translation))
+        {
+            translations.Add(new TranslationKey(time, new Vector3(
+                translation![0].At(time, 0), translation[1].At(time, 0), translation[2].At(time, 0))));
+        }
+
+        foreach (float time in KeyTimes(rotation))
+        {
+            var euler = new Vector3(
+                rotation![0].At(time, 0), rotation[1].At(time, 0), rotation[2].At(time, 0));
+
+            rotations.Add(new RotationKey(time,
+                BoneTransform.FromEulerXyz(Vector3.Zero, ToRadians(euler), Vector3.One).Rotation));
+        }
+
+        float duration = Math.Max(
+            translations.Count > 0 ? translations[^1].Time : 0f,
+            rotations.Count > 0 ? rotations[^1].Time : 0f);
+
+        return new RootMotion
+        {
+            Duration = duration,
+            Translations = translations,
+            Rotations = rotations,
+        };
+    }
+
+    /// <summary>
+    /// The events the document carries, from the enum channels the writer puts
+    /// them on.
+    /// </summary>
+    public static IReadOnlyList<AnnotationTrack> ReadEvents(FbxDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        var scene = new FbxScene(document);
+        var tracks = new List<AnnotationTrack>();
+
+        foreach (FbxObject model in SkeletonModels(scene))
+        {
+            foreach ((FbxObject source, string property) in scene.PropertyConnectionsTo(model.Id))
+            {
+                if (source.Class != "AnimationCurveNode") continue;
+                if (!property.StartsWith("hkEvents", StringComparison.Ordinal)) continue;
+
+                // The texts live in the enum's value list, which follows the
+                // current index rather than replacing it.
+                string list = model.Properties.GetValues(property)
+                    .OfType<string>()
+                    .LastOrDefault() ?? string.Empty;
+
+                string[] texts = list.Split('~', StringSplitOptions.RemoveEmptyEntries);
+
+                FbxObject? curve = scene.PropertyConnectionsTo(source.Id)
+                    .Where(c => c.Property == "d|" + property && c.Source.Class == "AnimationCurve")
+                    .Select(c => c.Source)
+                    .FirstOrDefault();
+
+                if (curve is null) continue;
+
+                var events = new List<AnimationEvent>();
+
+                foreach ((float time, float value) in KeysOf(curve))
+                {
+                    int index = (int)MathF.Round(value);
+                    events.Add(new AnimationEvent(time,
+                        index >= 0 && index < texts.Length ? texts[index] : string.Empty));
+                }
+
+                tracks.Add(new AnnotationTrack
+                {
+                    Name = property.Length > "hkEvents".Length ? property["hkEvents".Length..] : string.Empty,
+                    Events = events,
+                });
+            }
+        }
+
+        return tracks;
+    }
+
+    private static Curve[]? ChannelOf(FbxScene scene, FbxObject model, string property)
+    {
+        FbxObject? node = scene.PropertyConnectionsTo(model.Id)
+            .Where(c => c.Property == property && c.Source.Class == "AnimationCurveNode")
+            .Select(c => c.Source)
+            .FirstOrDefault();
+
+        if (node is null) return null;
+
+        var curves = new Curve[3];
+        for (int axis = 0; axis < 3; axis++)
+        {
+            FbxObject? curve = scene.PropertyConnectionsTo(node.Id)
+                .Where(c => c.Property == Axes[axis] && c.Source.Class == "AnimationCurve")
+                .Select(c => c.Source)
+                .FirstOrDefault();
+
+            curves[axis] = Curve.From(curve, node.Properties.GetDouble(Axes[axis]));
+        }
+
+        return curves;
+    }
+
+    /// <summary>The times any component of a channel is keyed at, in order.</summary>
+    private static IEnumerable<float> KeyTimes(Curve[]? channel)
+    {
+        if (channel is null) return [];
+
+        return channel.SelectMany(c => c.Times)
+            .Distinct()
+            .OrderBy(t => t);
+    }
+
+    private static IEnumerable<(float Time, float Value)> KeysOf(FbxObject curve)
+    {
+        long[] times = curve.Node.Nodes
+            .FirstOrDefault(n => n.Name == "KeyTime")?.Properties[0] as long[] ?? [];
+
+        float[] values = curve.Node.Nodes
+            .FirstOrDefault(n => n.Name == "KeyValueFloat")?.Properties[0] as float[] ?? [];
+
+        for (int i = 0; i < Math.Min(times.Length, values.Length); i++)
+            yield return ((float)((double)times[i] / FbxAnimationWriter.TimeUnitsPerSecond), values[i]);
+    }
+
     /// <summary>The take's name, or empty when the document holds no stack.</summary>
     public static string ReadTakeName(FbxDocument document)
     {
@@ -246,6 +402,10 @@ public static class FbxAnimationReader
             _times = times;
             _values = values;
         }
+
+        /// <summary>The times this curve is keyed at, in seconds.</summary>
+        public IEnumerable<float> Times =>
+            _times.Select(t => (float)((double)t / FbxAnimationWriter.TimeUnitsPerSecond));
 
         public float End => _times.Length == 0
             ? 0f

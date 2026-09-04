@@ -140,18 +140,46 @@ does the same job in C++ through the FBX SDK: Z-up right-handed
 (`FbxAxisSystem::Max`), centimetres, and Euler XYZ static in degrees
 (`Eul_FromQuat(q, EulOrdXYZs)`).
 
-## Root motion is not extracted
+## Root motion
 
-An animation's root track and its *extracted motion* are different things. Havok
-keeps the travel of the character across the ground in a separate reference
-frame — `hkaAnimatedReferenceFrame` on the animation — and ck-cmd treats it
-separately too: it starts its track loop at 1 whenever the animation has root
-movement, and writes the root's curves from that reference frame instead.
+An animation's root track and its root motion are different things. The track
+animates the root bone in place; the motion is the travel across the ground,
+which Havok keeps apart so the game can drive the character controller with it.
 
-This writes the root track as it comes, and does not read the reference frame at
-all. For animations that carry one, the character can look displaced from where
-it ought to be. Everything else is unaffected, since only the root track is
-involved.
+Skyrim does not keep it in the `.hkx` at all. It lives in
+`animationdatasinglefile.txt` beside the behaviour graphs, a block per clip:
+
+    13              the clip's index within the project
+    1.0             how long the clip runs
+    1               how many translation keys follow
+    1.0 0 251.9 0   time, then x y z
+    1               how many rotation keys follow
+    1.0 0 0 0 1     time, then x y z w
+
+`AnimationDataFile` reads those. Pass one to the writer as
+`SampledAnimation.RootMotion` and it is sampled onto the root bone, *replacing*
+its track rather than adding to it — which is what ck-cmd does, and what a
+viewer needs if the character is to travel. `FbxAnimationReader.ReadRootMotion`
+takes it back off.
+
+Most clips carry a single key holding the identity, which is a clip saying it
+does not travel. `RootMotion.HasMovement` tells those apart from the rest: of
+the 17,000-odd blocks Skyrim ships, about 2,600 translate and 500 turn.
+
+## Events
+
+An animation announces events as it plays — a footstep, a hit, the end of a clip
+— which Havok stores as annotation tracks and a behaviour graph listens for.
+
+They ride on the root bone as animated enum properties named `hkEvents…`, the
+shape ck-cmd uses: the enum's values are the texts, and a curve says when each
+fires, with constant keys because an event is a moment rather than something
+that eases in.
+
+One deliberate difference. ck-cmd splits a text such as
+`SoundPlay.NPCChickenScratch` at its last capital and reassembles it on the way
+back, which does not survive every name. The text is stored whole here, so it
+round trips as written.
 
 ## Status
 

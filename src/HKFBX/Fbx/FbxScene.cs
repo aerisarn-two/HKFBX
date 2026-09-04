@@ -290,6 +290,22 @@ namespace HKFBX.Fbx
             return o;
         }
 
+        /// <summary>
+        /// Removes an object and every connection that mentions it.
+        /// </summary>
+        /// <remarks>
+        /// Leaving a connection pointing at an object that is gone is worse than
+        /// leaving the object: a reader following it lands on nothing.
+        /// </remarks>
+        public void Remove(FbxObject o)
+        {
+            ArgumentNullException.ThrowIfNull(o);
+
+            _objects.Remove(o);
+            _byId.Remove(o.Id);
+            _connections.RemoveAll(c => c.SourceId == o.Id || c.DestinationId == o.Id);
+        }
+
         public void Connect(FbxObject child, FbxObject parent) =>
             _connections.Add(new FbxConnection(FbxConnectionKind.ObjectObject, child.Id, parent.Id));
 
