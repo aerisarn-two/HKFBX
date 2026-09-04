@@ -113,6 +113,15 @@ They were found by diffing against a file that works — a Mixamo export — rat
 than by reading the specification, and the test suite compares against it
 directly when it is to hand.
 
+Two more lived a level down, in the binary container rather than the records,
+and are fixed in LeanMeshIO 1.0.1: a missing `FileId`, and a missing null record
+after an empty node. Either one gets a file rejected outright by the Autodesk
+FBX SDK, which reports the whole file as corrupted and names nothing.
+
+Output is verified against that SDK rather than against this project's own
+reader. All 45 sample conversions load, with their skeleton and their animation
+stack intact.
+
 The axis convention and rotation order are cross-checked against ck-cmd, which
 does the same job in C++ through the FBX SDK: Z-up right-handed
 (`FbxAxisSystem::Max`), centimetres, and Euler XYZ static in degrees

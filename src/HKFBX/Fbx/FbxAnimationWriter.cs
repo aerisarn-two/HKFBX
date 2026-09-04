@@ -103,15 +103,19 @@ public static class FbxAnimationWriter
     /// </summary>
     private static FbxDocument NewDocument(string takeName, long stop)
     {
-        var document = new FbxDocument { Version = FbxVersion.v7400 };
+        var document = new FbxDocument { Version = FbxVersion.v7700 };
 
         var header = new FbxNode("FBXHeaderExtension");
         header.Nodes.Add(new FbxNode("FBXHeaderVersion", 1003));
-        header.Nodes.Add(new FbxNode("FBXVersion", (int)FbxVersion.v7400));
+        header.Nodes.Add(new FbxNode("FBXVersion", (int)FbxVersion.v7700));
         header.Nodes.Add(new FbxNode("EncryptionType", 0));
 
         // Not decoration: readers reject a header without a timestamp.
+        // Truncated to the second. The footer code mangles millisecond/10 into
+        // its hash, so a value that is not a whole hundredth invites a mismatch
+        // between what a writer computes and what a reader recomputes.
         DateTime now = DateTime.Now;
+        now = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, now.Second);
         var stamp = new FbxNode("CreationTimeStamp");
         stamp.Nodes.Add(new FbxNode("Version", 1000));
         stamp.Nodes.Add(new FbxNode("Year", now.Year));
@@ -120,7 +124,7 @@ public static class FbxAnimationWriter
         stamp.Nodes.Add(new FbxNode("Hour", now.Hour));
         stamp.Nodes.Add(new FbxNode("Minute", now.Minute));
         stamp.Nodes.Add(new FbxNode("Second", now.Second));
-        stamp.Nodes.Add(new FbxNode("Millisecond", now.Millisecond));
+        stamp.Nodes.Add(new FbxNode("Millisecond", 0));
         header.Nodes.Add(stamp);
 
         header.Nodes.Add(new FbxNode("Creator", "HKFBX"));
