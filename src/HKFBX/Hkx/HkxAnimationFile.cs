@@ -15,7 +15,16 @@ public static class HkxAnimationFile
     /// Pulls the spline animation and its binding out of an animation packfile.
     /// </summary>
     public static (SplineAnimationData Animation, IReadOnlyList<short> TrackToBone, string SkeletonName)
-        ReadAnimation(string path)
+        ReadAnimation(string path) =>
+        ReadAnimationWithEvents(path) is var (a, t, s, _) ? (a, t, s) : default;
+
+    /// <summary>
+    /// As <see cref="ReadAnimation"/>, and also the events the animation
+    /// announces.
+    /// </summary>
+    public static (SplineAnimationData Animation, IReadOnlyList<short> TrackToBone,
+                   string SkeletonName, IReadOnlyList<AnnotationTrack> Annotations)
+        ReadAnimationWithEvents(string path)
     {
         var root = (hkRootLevelContainer)Util.ReadHKX(path);
         hkaAnimationContainer container = ContainerOf(root, path);
@@ -53,7 +62,8 @@ public static class HkxAnimationFile
 
         return (data,
                 binding?.m_transformTrackToBoneIndices.ToArray() ?? [],
-                binding?.m_originalSkeletonName ?? string.Empty);
+                binding?.m_originalSkeletonName ?? string.Empty,
+                ReadAnnotations(spline));
     }
 
     /// <summary>
@@ -116,6 +126,71 @@ public static class HkxAnimationFile
         }
 
         return new Skeleton { Name = skeleton.m_name ?? Path.GetFileNameWithoutExtension(path), Bones = bones };
+    }
+
+    /// <summary>
+    /// The animation's annotation tracks, with the empty ones left out.
+    /// </summary>
+    /// <remarks>
+    /// Havok gives an animation one track per transform track, so most are empty
+    /// padding; only the first usually carries anything.
+    /// </remarks>
+    private static IReadOnlyList<AnnotationTrack> ReadAnnotations(hkaAnimation animation)
+    {
+        var tracks = new List<AnnotationTrack>();
+
+        foreach (hkaAnnotationTrack track in animation.m_annotationTracks)
+        {
+            if (track.m_annotations.Count == 0) continue;
+
+            tracks.Add(new AnnotationTrack
+            {
+                Name = track.m_trackName ?? string.Empty,
+                Events = track.m_annotations
+                    .Select(a => new AnimationEvent(a.m_time, a.m_text ?? string.Empty))
+                    .ToArray(),
+            });
+        }
+
+        return tracks;
+    }
+
+    /// <summary>
+    /// Replaces the animation's annotation tracks with these events.
+    /// </summary>
+    /// <remarks>
+    /// The track count is left as Havok wants it -- one per transform track --
+    /// and the events go into the tracks by name, or into the first track when
+    /// they carry none.
+    /// </remarks>
+    public static void WriteAnnotations(string templatePath, IReadOnlyList<AnnotationTrack> tracks, string outputPath)
+    {
+        ArgumentNullException.ThrowIfNull(tracks);
+
+        var root = (hkRootLevelContainer)Util.ReadHKX(templatePath);
+        hkaAnimationContainer container = ContainerOf(root, templatePath);
+
+        hkaAnimation animation = container.m_animations.FirstOrDefault()
+            ?? throw new InvalidDataException($"'{templatePath}' holds no animation");
+
+        foreach (hkaAnnotationTrack track in animation.m_annotationTracks)
+            track.m_annotations = [];
+
+        foreach (AnnotationTrack track in tracks)
+        {
+            hkaAnnotationTrack? target =
+                animation.m_annotationTracks.FirstOrDefault(t => t.m_trackName == track.Name)
+                ?? animation.m_annotationTracks.FirstOrDefault();
+
+            if (target is null) break;
+
+            target.m_annotations = track.Events
+                .Select(e => new hkaAnnotationTrackAnnotation { m_time = e.Time, m_text = e.Text })
+                .ToList();
+        }
+
+        using FileStream stream = File.Create(outputPath);
+        Util.WriteHKX(root, HKXHeader.SkyrimSE(), stream);
     }
 
     private static hkaAnimationContainer ContainerOf(hkRootLevelContainer root, string path) =>

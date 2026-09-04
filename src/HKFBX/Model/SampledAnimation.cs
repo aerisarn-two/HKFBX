@@ -9,7 +9,7 @@ namespace HKFBX.Model;
 /// the other directly; both map onto samples. Going through samples also means
 /// the Havok codec and the FBX layer never have to know about each other.
 /// </remarks>
-public sealed class SampledAnimation
+public sealed record SampledAnimation
 {
     public required int FrameCount { get; init; }
 
@@ -26,6 +26,17 @@ public sealed class SampledAnimation
 
     /// <summary>Frame-major float tracks, which most animations do not have.</summary>
     public float[] Floats { get; init; } = [];
+
+    /// <summary>
+    /// The events the animation announces, from its annotation tracks.
+    /// </summary>
+    public IReadOnlyList<AnnotationTrack> Annotations { get; init; } = [];
+
+    /// <summary>
+    /// Where the clip carries the character while it plays, which Havok keeps
+    /// apart from the skeleton and Skyrim stores outside the .hkx entirely.
+    /// </summary>
+    public RootMotion RootMotion { get; init; } = RootMotion.None;
 
     /// <summary>
     /// Which skeleton bone each transform track drives, from the animation
