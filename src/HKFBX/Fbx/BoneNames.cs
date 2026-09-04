@@ -22,9 +22,9 @@ public enum BoneNaming
 /// ck-cmd's bone name escaping.
 /// </summary>
 /// <remarks>
-/// Skyrim's bone names carry characters that several 3D applications will not
-/// round trip — <c>NPC L Finger02 [LF02]</c> has two of them — so ck-cmd
-/// substitutes each for a marker. Reading undoes it unconditionally: a name that
+/// Rig names often carry characters that several 3D applications will not round
+/// trip — <c>NPC L Finger02 [LF02]</c>, a name of the sort ck-cmd was written
+/// for, has two — so ck-cmd substitutes each for a marker. Reading undoes it unconditionally: a name that
 /// carries no marker is returned unchanged, so a file from either convention
 /// comes back with the names Havok expects.
 /// </remarks>

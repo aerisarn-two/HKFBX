@@ -1,6 +1,6 @@
 using HKFBX.Model;
 
-namespace HKFBX.Hkx;
+namespace HKFBX.Tests.Skyrim;
 
 /// <summary>
 /// A clip generator: a named way of playing one animation, which is what a

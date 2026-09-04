@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Numerics;
 using HKFBX.Model;
 
-namespace HKFBX.Hkx;
+namespace HKFBX.Tests.Skyrim;
 
 /// <summary>
 /// One clip's entry in Skyrim's animation data.

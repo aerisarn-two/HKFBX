@@ -34,7 +34,7 @@ public sealed record SampledAnimation
 
     /// <summary>
     /// Where the clip carries the character while it plays, which Havok keeps
-    /// apart from the skeleton and Skyrim stores outside the .hkx entirely.
+    /// apart from the skeleton, and which a caller supplies from wherever it is kept.
     /// </summary>
     public RootMotion RootMotion { get; init; } = RootMotion.None;
 

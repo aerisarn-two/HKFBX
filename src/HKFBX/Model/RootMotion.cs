@@ -14,10 +14,13 @@ public readonly record struct RotationKey(float Time, Quaternion Value);
 /// <remarks>
 /// An animation's root track and its root motion are different things. The track
 /// animates the root bone in place; the motion is the travel across the ground,
-/// which Havok keeps apart so the game can apply it to the character controller
-/// rather than to the skeleton. Skyrim stores it outside the .hkx altogether, in
-/// the animation data that ships alongside the behaviour graphs, which is why it
-/// has to be supplied separately here.
+/// which engines keep apart so it can drive a character controller rather than
+/// the skeleton.
+///
+/// Where it is stored is a matter for whatever produced the animation, and is
+/// not this library's business: it may sit in the animation file, in a sidecar
+/// the engine ships, or be computed. It is supplied here already parsed, as
+/// keys, and carried through the conversion unchanged.
 ///
 /// Keys are sparse and need not land on frame boundaries: they are sampled onto
 /// the frame grid when written, and read back at whatever times the curves carry.
@@ -26,7 +29,10 @@ public sealed class RootMotion
 {
     public static RootMotion None { get; } = new();
 
-    /// <summary>Seconds the clip runs for, as the motion data states it.</summary>
+    /// <summary>
+    /// Seconds the motion runs for, which need not agree with the animation it is
+    /// applied to; only the range the two share is written.
+    /// </summary>
     public float Duration { get; init; }
 
     public IReadOnlyList<TranslationKey> Translations { get; init; } = [];
@@ -36,8 +42,9 @@ public sealed class RootMotion
     public bool IsEmpty => Translations.Count == 0 && Rotations.Count == 0;
 
     /// <summary>
-    /// Whether anything actually moves. A clip commonly carries one key holding
-    /// the identity, which is not motion.
+    /// Whether anything actually moves. Motion data commonly carries a single key
+    /// holding the identity, which is a way of stating that there is no travel;
+    /// that is not the same as carrying no keys at all.
     /// </summary>
     public bool HasMovement =>
         Translations.Any(k => k.Value.LengthSquared() > 1e-8f)

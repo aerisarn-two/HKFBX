@@ -1,7 +1,7 @@
 using System.Numerics;
 using HKFBX.Fbx;
-using HKFBX.Hkx;
 using HKFBX.Model;
+using HKFBX.Tests.Skyrim;
 using LeanMeshIO;
 
 namespace HKFBX.Tests;

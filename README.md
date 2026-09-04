@@ -144,41 +144,73 @@ does the same job in C++ through the FBX SDK: Z-up right-handed
 
 An animation's root track and its root motion are different things. The track
 animates the root bone in place; the motion is the travel across the ground,
-which Havok keeps apart so the game can drive the character controller with it.
+which engines keep apart so it can drive a character controller rather than the
+skeleton.
 
-Skyrim does not keep it in the `.hkx` at all. It lives in
-`animationdatasinglefile.txt` beside the behaviour graphs, a block per clip:
+Where that motion is *stored* is not this library's concern. It may be in the
+animation file, in a sidecar the engine ships, or computed — the library takes
+it as keys and carries it through:
 
-    13              the clip's index within the project
-    1.0             how long the clip runs
-    1               how many translation keys follow
-    1.0 0 251.9 0   time, then x y z
-    1               how many rotation keys follow
-    1.0 0 0 0 1     time, then x y z w
+```csharp
+var animation = sampled with
+{
+    RootMotion = new RootMotion
+    {
+        Duration = 1f,
+        Translations = [new TranslationKey(1f, new Vector3(0f, 251.9f, 0f))],
+        Rotations    = [new RotationKey(1f, Quaternion.Identity)],
+    },
+};
 
-`AnimationDataFile.ReadProjects` reads the file exactly — it consumes every
-line or throws saying which one stopped it — and gives back each project with
-its clip generators and their motion. That matters because a motion block names
-only a cache index: without the clips it points into, there is no saying which
-animation a motion belongs to. `project.MotionFor("TurnCannedL180")` does the
-join.
+FbxAnimationWriter.Build(skeleton, animation, "walk").Save(path);
+```
 
-Pass the result to the writer as
-`SampledAnimation.RootMotion` and it is sampled onto the root bone, *replacing*
-its track rather than adding to it — which is what ck-cmd does, and what a
-viewer needs if the character is to travel. `FbxAnimationReader.ReadRootMotion`
-takes it back off.
+It is sampled onto the root bone, *replacing* its track rather than adding to
+it — which is what ck-cmd does, and what a viewer needs if the character is to
+travel. `FbxAnimationReader.ReadRootMotion(document, skeleton)` takes it back
+off. Keys are sparse and need not land on frame boundaries.
 
-Most clips carry a single key holding the identity, which is a clip saying it
-does not travel. `RootMotion.HasMovement` tells those apart from the rest. Of
-the 6,725 blocks Skyrim ships across 49 projects, 2,632 translate and 511 turn.
+Motion data commonly carries a single key holding the identity, which is a way
+of saying there is no travel. `RootMotion.HasMovement` tells that apart from
+motion that goes somewhere, and from carrying no keys at all.
+
+### Where the tests get theirs
+
+Skyrim keeps root motion in `animationdatasinglefile.txt` rather than the
+`.hkx`, in a format that has nothing to do with Havok or with FBX. A reader for
+it lives in the **test project**, under `tests/HKFBX.Tests/Skyrim/`, because
+that is a source of real motion data to test against and not part of what this
+library does. Anyone converting animations from elsewhere supplies their own
+keys and never sees it.
+
+It parses the file exactly — every one of its 170,724 lines, or it throws
+naming the one that stopped it — because a motion block names only a cache
+index, and the clip generators are what say which animation that index belongs
+to. `project.MotionFor("TurnCannedL180")` does the join, the same one ck-cmd
+makes in `findMovement`.
+
+Across the 49 projects that ship a cache: 10,597 clips, 6,725 motion entries,
+2,632 of them travelling and 511 turning.
 
 ## Events
 
 An animation announces events as it plays — a footstep, a hit, the end of a clip
 — which Havok stores as annotation tracks and a behaviour graph listens for.
+They are named moments and carry no other meaning here:
 
-They ride on the root bone as animated enum properties named `hkEvents…`, the
+```csharp
+var animation = sampled with
+{
+    Annotations = [new AnnotationTrack
+    {
+        Name = "",
+        Events = [new AnimationEvent(0.25f, "SoundPlay.NPCFootstep")],
+    }],
+};
+```
+
+`FbxAnimationReader.ReadEvents(document)` reads them back. In the FBX they ride
+on the root bone as animated enum properties named `hkEvents…`, the
 shape ck-cmd uses: the enum's values are the texts, and a curve says when each
 fires, with constant keys because an event is a moment rather than something
 that eases in.
