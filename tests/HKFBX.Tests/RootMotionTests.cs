@@ -250,32 +250,191 @@ public class AnimationDataFileTests
     }
 
     [CorpusFact]
-    public void ReadsTheRootMotionSkyrimShips()
+    public void ReadsEverythingSkyrimShips()
     {
         string path = Path.Combine(Corpus.Root!, "animationdatasinglefile.txt");
 
         if (!File.Exists(path)) return;
 
-        IReadOnlyList<MotionEntry> motions = AnimationDataFile.ReadMotions(path);
+        // The parse is exact: it either consumes the file or says where it gave
+        // up. Nothing here is a tolerance.
+        IReadOnlyList<AnimationProject> projects = AnimationDataFile.ReadProjects(path);
 
-        // Blocks stating no keys at all are skipped: they carry nothing, and a
-        // bare pair of integers is too weak a shape to claim without swallowing
-        // unrelated lines. What must not be missed is anything that moves.
-        Assert.True(motions.Count > 5000, $"only found {motions.Count} motion blocks");
+        Assert.Equal(429, projects.Count);
+        Assert.Equal("ChickenProject.txt", projects[0].Name);
+        Assert.Equal(49, projects.Count(p => p.HasCache));
 
-        var moving = motions.Where(m => m.Motion.HasMovement).ToList();
-        Assert.True(moving.Count > 2500, $"only {moving.Count} carry movement");
+        var motions = projects.SelectMany(p => p.Motions).ToList();
 
-        var travelling = motions.Count(m => m.Motion.Translations.Any(k => k.Value.LengthSquared() > 1e-8f));
-        var turning = motions.Count(m => m.Motion.Rotations.Any(k => Math.Abs(k.Value.W) < 1f - 1e-6f));
+        Assert.Equal(10597, projects.Sum(p => p.Clips.Count));
+        Assert.Equal(6725, motions.Count);
 
-        Assert.True(travelling >= 2600, $"only {travelling} translate");
-        Assert.True(turning >= 500, $"only {turning} rotate");
+        // Every entry carries keys; a clip with nothing to say is simply absent.
+        Assert.All(motions, m => Assert.False(m.Motion.IsEmpty));
+
+        Assert.Equal(2632, motions.Count(m => m.Motion.Translations.Any(k => k.Value.LengthSquared() > 1e-8f)));
+        Assert.Equal(511, motions.Count(m => m.Motion.Rotations.Any(k => Math.Abs(k.Value.W) < 1f - 1e-6f)));
 
         Assert.All(motions, m =>
         {
             for (int i = 1; i < m.Motion.Translations.Count; i++)
                 Assert.True(m.Motion.Translations[i].Time >= m.Motion.Translations[i - 1].Time);
         });
+    }
+
+    [CorpusFact]
+    public void FindsAClipsMotionByName()
+    {
+        string path = Path.Combine(Corpus.Root!, "animationdatasinglefile.txt");
+
+        if (!File.Exists(path)) return;
+
+        AnimationProject chicken = AnimationDataFile.ReadProjects(path)
+            .First(p => p.Name == "ChickenProject.txt");
+
+        Assert.Contains("Behaviors\\ChickenBehavior.hkx", chicken.Assets);
+
+        ClipEntry idle = chicken.Clip("Idle Fulbody2[mirror]")!;
+
+        Assert.Equal(4, idle.CacheIndex);
+        Assert.Equal(1f, idle.PlaybackSpeed);
+        Assert.Equal(4, idle.Events.Count);
+        Assert.Equal("SoundPlay.NPCChickenScratch", idle.Events[0].Text);
+        Assert.Equal(0.333333f, idle.Events[0].Time, 5);
+        Assert.Equal("idleStop", idle.Events[^1].Text);
+
+        // A chicken pecking about does not travel.
+        Assert.False(chicken.MotionFor("Idle Fulbody2[mirror]").HasMovement);
+
+        // Naming a clip that is not there is not an error; it has no motion.
+        Assert.True(chicken.MotionFor("NoSuchClip").IsEmpty);
+    }
+}
+
+/// <summary>
+/// The counted-block structure the animation data is written in.
+/// </summary>
+public class AnimationProjectTests
+{
+    // One project: three asset paths, two clips, and motion for the second.
+    private const string OneProject = """
+        1
+        DemoProject.txt
+        20
+        1
+        3
+        Behaviors\DemoBehavior.hkx
+        Characters\DemoCharacter.hkx
+        Character Assets\skeleton.HKX
+        1
+        MainIdle
+        12
+        1
+        0
+        0
+        1
+        clipEnd:6.65767
+
+        WalkForward
+        13
+        1
+        0
+        0
+        0
+        6
+        13
+        1
+        1
+        1 0 251.9 0
+        1
+        1 0 0 0 1
+        """;
+
+    [Fact]
+    public void ReadsAProjectWithItsClipsAndMotion()
+    {
+        AnimationProject project = Assert.Single(AnimationDataFile.ParseProjects(OneProject));
+
+        Assert.Equal("DemoProject.txt", project.Name);
+        Assert.True(project.HasCache);
+        Assert.Equal(3, project.Assets.Count);
+        Assert.Equal("Characters\\DemoCharacter.hkx", project.Assets[1]);
+
+        Assert.Equal(2, project.Clips.Count);
+        Assert.Equal("MainIdle", project.Clips[0].Name);
+        Assert.Equal(12, project.Clips[0].CacheIndex);
+
+        // The motion belongs to the clip that shares its cache index.
+        Assert.True(project.MotionFor("WalkForward").HasMovement);
+        Assert.False(project.MotionFor("MainIdle").HasMovement);
+
+        Assert.Equal(251.9f, project.MotionFor("WalkForward").TranslationAt(1f).Y, 3);
+    }
+
+    [Fact]
+    public void AProjectWithoutACacheHasNoMotionBlock()
+    {
+        const string text = """
+            1
+            BowProject.txt
+            2
+            0
+            0
+            """;
+
+        AnimationProject project = Assert.Single(AnimationDataFile.ParseProjects(text));
+
+        Assert.False(project.HasCache);
+        Assert.Empty(project.Clips);
+        Assert.Empty(project.Motions);
+        Assert.Empty(project.Assets);
+    }
+
+    [Fact]
+    public void EventTextsKeepAColonOfTheirOwn()
+    {
+        // The time is taken from the last colon, so a text carrying one survives.
+        const string text = """
+            1
+            P.txt
+            9
+            0
+            1
+            Clip
+            1
+            1
+            0
+            0
+            1
+            Sound:Play.Thing:0.25
+            5
+            1
+            1
+            1
+            1 0 1 0
+            0
+            """;
+
+        ClipEntry clip = Assert.Single(AnimationDataFile.ParseProjects(text)[0].Clips);
+
+        Assert.Equal("Sound:Play.Thing", clip.Events[0].Text);
+        Assert.Equal(0.25f, clip.Events[0].Time, 5);
+    }
+
+    [Fact]
+    public void SaysWhereItGaveUp()
+    {
+        const string broken = """
+            1
+            P.txt
+            3
+            1
+            2
+            only one path
+            """;
+
+        var error = Assert.Throws<InvalidDataException>(() => AnimationDataFile.ParseProjects(broken));
+
+        Assert.Contains("line", error.Message, StringComparison.Ordinal);
     }
 }

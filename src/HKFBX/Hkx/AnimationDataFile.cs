@@ -14,27 +14,238 @@ public sealed record MotionEntry(int ClipId, RootMotion Motion);
 /// </summary>
 /// <remarks>
 /// Root motion is not in the .hkx. It lives in the animation data that ships
-/// beside the behaviour graphs, as a block per clip:
+/// beside the behaviour graphs, in a file that is a sequence of counted blocks:
 ///
-///     13              the clip's index within the project
-///     1.0             how long the clip runs
-///     1               how many translation keys follow
-///     1.0 0 251.9 0   time, then x y z
-///     1               how many rotation keys follow
-///     1.0 0 0 0 1     time, then x y z w
+///     429                         how many projects follow
+///     ChickenProject.txt          their names
+///     ...
+///     328                         how many lines the first project's block holds
+///     1                           whether asset paths follow
+///     3                           how many
+///     Behaviors\ChickenBehavior.hkx
+///     ...
+///     1                           whether an animation cache follows
+///     MainIdle                    a clip generator's name
+///     12                          its cache index
+///     1                           playback speed
+///     0                           cropped from the start
+///     0                           cropped from the end
+///     1                           how many events follow
+///     clipEnd:6.65767             an event, and when it fires
+///                                 a blank line ends the clip
 ///
-/// The file opens with a count and that many project names, then the projects
-/// themselves, each holding clip definitions and then its motion blocks. Rather
-/// than model all of that, this scans for blocks that parse as the shape above,
-/// which is unambiguous enough to pick them out and leaves the reader unbothered
-/// by the parts of the format it has no use for.
+/// A project that has a cache is followed by a second counted block holding its
+/// motion, one entry per clip that has any:
 ///
-/// Most blocks hold a single key at the clip's end carrying nothing, which is how
-/// a clip says it does not travel. <see cref="RootMotion.HasMovement"/> tells
-/// those apart from the ones that do.
+///     13                          the cache index this belongs to
+///     1.0                         how long the clip runs
+///     1                           how many translation keys follow
+///     1.0 0 251.9 0               time, then x y z
+///     1                           how many rotation keys follow
+///     1.0 0 0 0 1                 time, then x y z w
+///
+/// <see cref="ReadProjects"/> reads all of that, and is exact: it consumes the
+/// file to its last line or throws saying where it stopped. That matters because
+/// a motion entry names only a cache index, so without the clips it points into
+/// there is no way to say which animation a motion belongs to.
+///
+/// Most entries hold a single key at the clip's end carrying the identity, which
+/// is how a clip says it does not travel. <see cref="RootMotion.HasMovement"/>
+/// tells those apart from the ones that do.
 /// </remarks>
 public static class AnimationDataFile
 {
+    /// <summary>Every project in the file, with its clips and their motion.</summary>
+    /// <exception cref="InvalidDataException">
+    /// The file does not follow the format, naming the line it stopped at.
+    /// </exception>
+    public static IReadOnlyList<AnimationProject> ReadProjects(string path) =>
+        ParseProjects(File.ReadAllText(path));
+
+    /// <summary>Every project in a fragment of the format.</summary>
+    /// <inheritdoc cref="ReadProjects" path="/exception"/>
+    public static IReadOnlyList<AnimationProject> ParseProjects(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var lines = new Cursor(text.Split('\n').Select(l => l.TrimEnd('\r')).ToArray());
+
+        int count = lines.Int("the project count");
+        var names = new string[count];
+        for (int i = 0; i < count; i++) names[i] = lines.Line();
+
+        var projects = new List<AnimationProject>(count);
+
+        foreach (string name in names)
+        {
+            Cursor block = lines.Counted($"the block for {name}");
+
+            bool hasAssets = block.Int("whether asset paths follow") == 1;
+            var assets = new List<string>();
+
+            if (hasAssets)
+            {
+                int assetCount = block.Int("the asset count");
+                for (int i = 0; i < assetCount; i++) assets.Add(block.Line());
+            }
+
+            bool hasCache = block.Int("whether a cache follows") == 1;
+            var clips = new List<ClipEntry>();
+
+            if (hasCache)
+            {
+                while (!block.Done)
+                {
+                    clips.Add(ReadClip(block));
+                    if (!block.Done) block.Line();   // the blank line ending the clip
+                }
+            }
+
+            var motions = new List<MotionEntry>();
+
+            if (hasCache)
+            {
+                Cursor data = lines.Counted($"the motion for {name}");
+
+                while (!data.Done)
+                {
+                    motions.Add(ReadMotion(data));
+                    if (!data.Done) data.Line();
+                }
+            }
+
+            projects.Add(new AnimationProject(name, assets, hasCache, clips, motions));
+        }
+
+        return projects;
+    }
+
+    private static ClipEntry ReadClip(Cursor block)
+    {
+        string name = block.Line();
+        int cacheIndex = block.Int("a clip's cache index");
+        float speed = block.Float("a clip's playback speed");
+        float cropStart = block.Float("a clip's start crop");
+        float cropEnd = block.Float("a clip's end crop");
+
+        int eventCount = block.Int("a clip's event count");
+        var events = new List<AnimationEvent>(eventCount);
+
+        for (int i = 0; i < eventCount; i++)
+        {
+            // "SoundPlay.NPCChickenScratch:0.333333" — the text may itself hold a
+            // colon, so the time is taken from the last one.
+            string line = block.Line();
+            int split = line.LastIndexOf(':');
+
+            if (split < 0 || !float.TryParse(line.AsSpan(split + 1), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out float time))
+            {
+                throw block.Fail($"an event of clip {name}", line);
+            }
+
+            events.Add(new AnimationEvent(time, line[..split]));
+        }
+
+        return new ClipEntry(name, cacheIndex, speed, cropStart, cropEnd, events);
+    }
+
+    private static MotionEntry ReadMotion(Cursor data)
+    {
+        int cacheIndex = data.Int("a motion's cache index");
+        float duration = data.Float("a motion's duration");
+
+        int translationCount = data.Int("a translation key count");
+        var translations = new List<TranslationKey>(translationCount);
+
+        for (int i = 0; i < translationCount; i++)
+        {
+            float[] v = data.Numbers(4, "a translation key");
+            translations.Add(new TranslationKey(v[0], new Vector3(v[1], v[2], v[3])));
+        }
+
+        int rotationCount = data.Int("a rotation key count");
+        var rotations = new List<RotationKey>(rotationCount);
+
+        for (int i = 0; i < rotationCount; i++)
+        {
+            float[] v = data.Numbers(5, "a rotation key");
+            rotations.Add(new RotationKey(v[0], new Quaternion(v[1], v[2], v[3], v[4])));
+        }
+
+        return new MotionEntry(cacheIndex, new RootMotion
+        {
+            Duration = duration,
+            Translations = translations,
+            Rotations = rotations,
+        });
+    }
+
+    /// <summary>
+    /// A position in the lines, which reports where it gave up rather than
+    /// silently returning less than the file holds.
+    /// </summary>
+    private sealed class Cursor(IReadOnlyList<string> lines, int start = 0, int end = -1)
+    {
+        private readonly int _end = end < 0 ? lines.Count : end;
+        private int _at = start;
+
+        public bool Done => _at >= _end;
+
+        public string Line() =>
+            _at < _end ? lines[_at++] : throw Fail("another line", "the end of the block");
+
+        public int Int(string what) =>
+            int.TryParse(Peek().Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int v)
+                ? Take(v)
+                : throw Fail(what, Peek());
+
+        public float Float(string what) =>
+            float.TryParse(Peek().Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float v)
+                ? Take(v)
+                : throw Fail(what, Peek());
+
+        public float[] Numbers(int count, string what)
+        {
+            string line = Peek();
+            string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length != count) throw Fail(what, line);
+
+            var values = new float[count];
+            for (int i = 0; i < count; i++)
+            {
+                if (!float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]))
+                    throw Fail(what, line);
+            }
+
+            return Take(values);
+        }
+
+        /// <summary>A block of as many lines as its first line says.</summary>
+        public Cursor Counted(string what)
+        {
+            int count = Int(what);
+            if (_at + count > _end) throw Fail(what, $"{count} lines, but only {_end - _at} remain");
+
+            var block = new Cursor(lines, _at, _at + count);
+            _at += count;
+
+            return block;
+        }
+
+        public InvalidDataException Fail(string what, string saw) =>
+            new($"line {_at + 1}: expected {what}, saw '{saw}'");
+
+        private string Peek() => _at < _end ? lines[_at] : throw Fail("another line", "the end of the block");
+
+        private T Take<T>(T value)
+        {
+            _at++;
+            return value;
+        }
+    }
+
     /// <summary>Every motion block in the file, in the order they appear.</summary>
     public static IReadOnlyList<MotionEntry> ReadMotions(string path) =>
         ParseMotions(File.ReadAllLines(path));

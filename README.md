@@ -156,15 +156,22 @@ Skyrim does not keep it in the `.hkx` at all. It lives in
     1               how many rotation keys follow
     1.0 0 0 0 1     time, then x y z w
 
-`AnimationDataFile` reads those. Pass one to the writer as
+`AnimationDataFile.ReadProjects` reads the file exactly — it consumes every
+line or throws saying which one stopped it — and gives back each project with
+its clip generators and their motion. That matters because a motion block names
+only a cache index: without the clips it points into, there is no saying which
+animation a motion belongs to. `project.MotionFor("TurnCannedL180")` does the
+join.
+
+Pass the result to the writer as
 `SampledAnimation.RootMotion` and it is sampled onto the root bone, *replacing*
 its track rather than adding to it — which is what ck-cmd does, and what a
 viewer needs if the character is to travel. `FbxAnimationReader.ReadRootMotion`
 takes it back off.
 
 Most clips carry a single key holding the identity, which is a clip saying it
-does not travel. `RootMotion.HasMovement` tells those apart from the rest: of
-the 17,000-odd blocks Skyrim ships, about 2,600 translate and 500 turn.
+does not travel. `RootMotion.HasMovement` tells those apart from the rest. Of
+the 6,725 blocks Skyrim ships across 49 projects, 2,632 translate and 511 turn.
 
 ## Events
 
