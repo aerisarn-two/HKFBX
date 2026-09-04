@@ -9,6 +9,25 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <PackageId>HKFBX</PackageId>
+    <Authors>Aerisarn</Authors>
+    <Description>Converts Havok animations between hkx and FBX. Reads a spline-compressed animation and its skeleton, samples it through Havok's own codec, and writes an FBX carrying the skeleton as a node hierarchy and the animation as a stack of curves over it -- and back again.</Description>
+    <PackageTags>havok;hkx;fbx;skyrim;animation;skeleton;conversion</PackageTags>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/aerisarn-two/HKFBX</RepositoryUrl>
+
+    <!-- Overridden by the release workflow from the tag. -->
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="HKX2" Version="1.0.0" />
     <PackageReference Include="LeanMeshIO" Version="1.0.2" />

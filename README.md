@@ -140,6 +140,19 @@ does the same job in C++ through the FBX SDK: Z-up right-handed
 (`FbxAxisSystem::Max`), centimetres, and Euler XYZ static in degrees
 (`Eul_FromQuat(q, EulOrdXYZs)`).
 
+## Root motion is not extracted
+
+An animation's root track and its *extracted motion* are different things. Havok
+keeps the travel of the character across the ground in a separate reference
+frame — `hkaAnimatedReferenceFrame` on the animation — and ck-cmd treats it
+separately too: it starts its track loop at 1 whenever the animation has root
+movement, and writes the root's curves from that reference frame instead.
+
+This writes the root track as it comes, and does not read the reference frame at
+all. For animations that carry one, the character can look displaced from where
+it ought to be. Everything else is unaffected, since only the root track is
+involved.
+
 ## Status
 
 The loop is closed: hkx to FBX to hkx, checked against real animations. A
