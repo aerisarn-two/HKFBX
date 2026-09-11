@@ -362,7 +362,7 @@ public static class FbxAnimationReader
             curves[2].At(time, fallback.Z));
     }
 
-    private static BoneTransform LocalTransformOf(FbxObject model)
+    internal static BoneTransform LocalTransformOf(FbxObject model)
     {
         FbxProperties properties = model.Properties;
 

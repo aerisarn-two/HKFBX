@@ -106,7 +106,7 @@ public static class FbxAnimationWriter
     /// The records every reader expects before it will look at the rest: a header
     /// with a timestamp, the axis convention, and the tick rate.
     /// </summary>
-    private static FbxDocument NewDocument(string takeName, long stop)
+    internal static FbxDocument NewDocument(string takeName, long stop)
     {
         var document = new FbxDocument { Version = FbxVersion.v7700 };
 
@@ -204,7 +204,7 @@ public static class FbxAnimationWriter
     /// One Model per bone, parented as the skeleton says, each carrying its rest
     /// pose as its local transform.
     /// </summary>
-    private static FbxObject[] AddSkeleton(FbxScene scene, Skeleton skeleton, BoneNaming naming)
+    internal static FbxObject[] AddSkeleton(FbxScene scene, Skeleton skeleton, BoneNaming naming)
     {
         var models = new FbxObject[skeleton.Count];
 
@@ -554,7 +554,7 @@ public static class FbxAnimationWriter
         document.Nodes.Add(takes);
     }
 
-    private static FbxNode EnsureProperties70(FbxNode node)
+    internal static FbxNode EnsureProperties70(FbxNode node)
     {
         FbxNode? existing = node.Nodes.FirstOrDefault(n => n.Name == "Properties70");
         if (existing is not null) return existing;
