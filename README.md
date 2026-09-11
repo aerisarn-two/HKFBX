@@ -52,6 +52,74 @@ comes from the binding. The names, the hierarchy and the rest pose live in a
 separate skeleton `.hkx`. Both files are needed to produce an FBX anyone can
 read.
 
+## The rig and its ragdoll
+
+A Skyrim `skeleton.hkx` is not one skeleton. It carries the animation rig, a
+second and much shorter skeleton for the ragdoll, a rigid body per ragdoll bone,
+a joint per link between them, two mappings tying one skeleton to the other, and
+a character bumper that belongs to the physics but not to the ragdoll.
+
+```csharp
+SkeletonFile rig = HkxSkeletonFile.Read(@"character assets\skeleton.hkx");
+
+FbxDocument document = FbxSkeletonWriter.Build(rig);       // out
+SkeletonFile edited = FbxSkeletonReader.Read(document);    // and back
+HkxSkeletonFile.Write(template, edited, @"skeleton.hkx");  // into a packfile
+```
+
+All 48 ragdolls the game ships survive that chain. Positions, capsule shapes and
+joint limits come back exactly; rotations come back within a fiftieth of a degree,
+which is the floor of storing an orientation as three Euler angles.
+
+### What is native, and what is a property
+
+Everything FBX has a word for is written as FBX. A bone is a node, a body is a
+node **under the rig bone it drives** — where the same ragdoll sits in the
+creature's `skeleton.nif`, so the two agree — a joint is a node between two
+bodies, and every frame is a node's own transform.
+
+What FBX has no word for rides as user properties: there is no cone, twist or
+plane limit in the format, and no mass, motion type or collision filter. The names
+are the ones ck-cmd's `importrig` already reads.
+
+FBX's own constraint objects were considered and rejected. They are *animation*
+constraints — parent, position, aim — and cannot express a limit; and Blender does
+not export them at all, which was measured rather than assumed: a scene with a
+Child Of constraint exports with no `Constraint` object in the file, while custom
+properties survive in both directions.
+
+Two things are carried that ck-cmd drops:
+
+- **The far side of every joint.** A joint has two frames, one per body. ck-cmd
+  computes both and writes one, so the A side is lost on the way out. Here it is a
+  child node, which is a transform rather than a number in a string.
+- **Which rig bone a body drives.** It cannot be worked out from the names: the
+  human prefixes (`NPC L Thigh` to `Ragdoll_NPC L Thigh`), the bear renumbers
+  (`NPC Spine1` to `Ragdoll_NPC Spine01`) and the chicken shifts by one (`Neck0` to
+  `Ragdoll_Neck01`).
+
+The ragdoll skeleton itself is *not* written, because it does not have to be: it is
+a bone per body, named after it, and the joints are its hierarchy. That holds in
+every skeleton the game ships, so it is rebuilt on the way back in rather than
+kept in two places that could disagree.
+
+### Names do not survive, so nothing depends on them
+
+Blender caps an object name at 63 characters and rewrites the overflow as a hash,
+which eats the `_attach_point` suffix off two thirds of a human skeleton's joints.
+So a joint names its two bodies in properties rather than leaving them to be
+parsed out of the node's name, and the far frame is marked by a property too.
+
+### Writing is by template
+
+A skeleton file is a thousand objects and almost all of them are scaffolding:
+motion states, collidables, broad phase handles, constraint atoms, the memory
+resource tree. Rebuilding that would mean inventing values the original already
+has right, so `Write` edits the original and replaces what a converter can
+carry — poses, body transforms and shapes, joint frames and limits. Bones and
+bodies are matched by name; anything the template has no place for is returned
+rather than half-applied.
+
 ## Testing
 
 ```sh
