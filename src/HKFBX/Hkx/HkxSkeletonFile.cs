@@ -412,8 +412,8 @@ public static class HkxSkeletonFile
     {
         List<IHavokObject> objects = [];
 
-        foreach (hkRootLevelContainerNamedVariant variant in root.m_namedVariants)
-            if (variant.m_variant is { } value)
+        foreach (hkRootLevelContainerNamedVariant? variant in root.m_namedVariants)
+            if (variant?.m_variant is { } value)
                 objects.Add(value);
 
         return objects;
