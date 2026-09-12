@@ -201,6 +201,96 @@ public static class FbxAnimationWriter
     }
 
     /// <summary>
+    /// Adds one more animation stack over a skeleton the document already holds.
+    /// </summary>
+    /// <param name="document">
+    /// A scene with a Model per bone already in it — from this writer, from a mesh
+    /// converter, from anywhere. Modified in place.
+    /// </param>
+    /// <param name="skeleton">
+    /// The skeleton the animation is bound against. Its bone order is what the
+    /// animation's track bindings index, so it must be the rig the clip was
+    /// authored for and not merely a skeleton with the same names.
+    /// </param>
+    /// <param name="animation">The clip, sampled, with its bindings and events.</param>
+    /// <param name="takeName">
+    /// The stack's name, and the take's. **It must be unique in the document**: two
+    /// stacks of one name is a file whose clips a reader cannot tell apart, and
+    /// clip names are not unique in the game's own animation cache — three of the
+    /// 49 actor projects hold a repeat. Disambiguating is the caller's job, because
+    /// only the caller knows what the second one should be called.
+    /// </param>
+    /// <param name="nodeNames">
+    /// The node each bone is called in this document, where that is not the bone's
+    /// own name. A scene converted from a NIF has its names escaped — a space is
+    /// <c>_s_</c> and a bracket <c>_ob_</c> — so <c>NPC L Forearm [LLar]</c> is not
+    /// what the Model is called. Null takes every bone name as its node name.
+    /// </param>
+    /// <returns>
+    /// How many of the animation's tracks found a node to drive. Fewer than the
+    /// track count means the document is missing bones the clip animates, which is
+    /// worth knowing rather than worth throwing over: a clip authored against a
+    /// fuller rig is still mostly playable.
+    /// </returns>
+    public static int AddStack(
+        FbxDocument document, Skeleton skeleton, SampledAnimation animation, string takeName,
+        IReadOnlyDictionary<string, string>? nodeNames = null)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(skeleton);
+        ArgumentNullException.ThrowIfNull(animation);
+
+        var scene = new FbxScene(document);
+        var byName = new Dictionary<string, FbxObject>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (FbxObject model in scene.OfClass("Model"))
+            byName.TryAdd(model.Name, model);
+
+        var models = new FbxObject?[skeleton.Count];
+        int bound = 0;
+
+        for (int i = 0; i < skeleton.Count; i++)
+        {
+            string bone = skeleton.Bones[i].Name;
+            string node = nodeNames?.GetValueOrDefault(bone) ?? bone;
+
+            if (!byName.TryGetValue(node, out FbxObject? model))
+                continue;
+
+            models[i] = model;
+            bound++;
+
+            // A curve on a property the node does not admit is animatable is a
+            // curve a reader is entitled to ignore, and several do. "A+" says
+            // animatable and animated; whatever the node was written with, it is
+            // animated now.
+            Animatable(model);
+        }
+
+        AddAnimation(scene, skeleton, models, animation, takeName);
+        scene.Flush();
+        AddTakes(document, takeName, ToFbxTime(animation.Duration));
+
+        return bound;
+    }
+
+    /// <summary>
+    /// Marks a node's three transform properties as animated, leaving their values
+    /// alone.
+    /// </summary>
+    private static void Animatable(FbxObject model)
+    {
+        var properties = new FbxProperties(EnsureProperties70(model.Node));
+
+        foreach (string name in new[] { "Lcl Translation", "Lcl Rotation", "Lcl Scaling" })
+        {
+            foreach (FbxProperty70 property in properties.All)
+                if (property.Name == name)
+                    property.SetFlags("A+");
+        }
+    }
+
+    /// <summary>
     /// One Model per bone, parented as the skeleton says, each carrying its rest
     /// pose as its local transform.
     /// </summary>
@@ -268,7 +358,7 @@ public static class FbxAnimationWriter
     }
 
     private static void AddAnimation(
-        FbxScene scene, Skeleton skeleton, FbxObject[] models,
+        FbxScene scene, Skeleton skeleton, FbxObject?[] models,
         SampledAnimation animation, string takeName)
     {
         FbxObject stack = Add(scene, "AnimationStack", takeName, string.Empty);
@@ -302,7 +392,7 @@ public static class FbxAnimationWriter
             // A binding can name a bone the skeleton does not have, usually
             // because the animation was authored against a different rig. Those
             // tracks have nothing to drive.
-            if (bone < 0 || bone >= models.Length) continue;
+            if (bone < 0 || bone >= models.Length || models[bone] is not { } driven) continue;
 
             var translation = new float[3][];
             var rotation = new float[3][];
@@ -333,9 +423,9 @@ public static class FbxAnimationWriter
                 scale[2][f] = t.Scale.Z;
             }
 
-            curveNodes.Add(AddChannel(scene, models[bone], "Lcl Translation", "T", times, translation));
-            curveNodes.Add(AddChannel(scene, models[bone], "Lcl Rotation", "R", times, rotation));
-            curveNodes.Add(AddChannel(scene, models[bone], "Lcl Scaling", "S", times, scale));
+            curveNodes.Add(AddChannel(scene, driven, "Lcl Translation", "T", times, translation));
+            curveNodes.Add(AddChannel(scene, driven, "Lcl Rotation", "R", times, rotation));
+            curveNodes.Add(AddChannel(scene, driven, "Lcl Scaling", "S", times, scale));
         }
 
         // Root motion drives the root bone instead of its own track, which is
@@ -345,7 +435,7 @@ public static class FbxAnimationWriter
         {
             int root = skeleton.Roots().FirstOrDefault(-1);
 
-            if (root >= 0)
+            if (root >= 0 && root < models.Length && models[root] is { } carried)
             {
                 var translation = new float[3][];
                 var rotation = new float[3][];
@@ -371,10 +461,10 @@ public static class FbxAnimationWriter
 
                 // Replaced rather than added to: two curve nodes on one property
                 // is a layer blend, not an override.
-                RemoveChannels(scene, curveNodes, models[root]);
+                RemoveChannels(scene, curveNodes, carried);
 
-                curveNodes.Add(AddChannel(scene, models[root], "Lcl Translation", "T", times, translation));
-                curveNodes.Add(AddChannel(scene, models[root], "Lcl Rotation", "R", times, rotation));
+                curveNodes.Add(AddChannel(scene, carried, "Lcl Translation", "T", times, translation));
+                curveNodes.Add(AddChannel(scene, carried, "Lcl Rotation", "R", times, rotation));
             }
         }
 
@@ -418,15 +508,15 @@ public static class FbxAnimationWriter
     /// nothing and round trips.
     /// </remarks>
     private static void AddEvents(
-        FbxScene scene, FbxObject[] models, Skeleton skeleton, FbxObject layer,
+        FbxScene scene, FbxObject?[] models, Skeleton skeleton, FbxObject layer,
         IReadOnlyList<AnnotationTrack> tracks)
     {
         if (tracks.Count == 0 || models.Length == 0) return;
 
         int root = skeleton.Roots().FirstOrDefault(-1);
-        if (root < 0) return;
+        if (root < 0 || root >= models.Length || models[root] is not { } announcing) return;
 
-        var properties = new FbxProperties(EnsureProperties70(models[root].Node));
+        var properties = new FbxProperties(EnsureProperties70(announcing.Node));
 
         for (int i = 0; i < tracks.Count; i++)
         {
@@ -444,7 +534,7 @@ public static class FbxAnimationWriter
             var channel = new FbxProperties(EnsureProperties70(node.Node));
             channel.Set("d|" + property, "Number", string.Empty, "A", 0.0);
 
-            scene.ConnectToProperty(node, models[root], property);
+            scene.ConnectToProperty(node, announcing, property);
             scene.Connect(node, layer);
 
             var times = new long[track.Events.Count];
@@ -532,10 +622,28 @@ public static class FbxAnimationWriter
     /// The take list, which predates AnimationStack and which some readers still
     /// consult to find the timeline.
     /// </summary>
+    /// <summary>
+    /// Records a take in the document's <c>Takes</c> block, adding the block if it
+    /// has none.
+    /// </summary>
+    /// <remarks>
+    /// Appends. A document may hold many stacks and every one of them needs a take,
+    /// or a reader offers the animation it cannot find a take for as no clip at all.
+    /// <c>Current</c> names whichever was added first, since something has to be
+    /// current and the first is as good a choice as any.
+    /// </remarks>
     private static void AddTakes(FbxDocument document, string takeName, long stop)
     {
-        var takes = new FbxNode("Takes");
-        takes.Nodes.Add(new FbxNode("Current", takeName));
+        FbxNode? takes = document["Takes"];
+
+        if (takes is null)
+        {
+            takes = new FbxNode("Takes");
+            document.Nodes.Add(takes);
+        }
+
+        if (takes.Nodes.All(n => n.Name != "Current"))
+            takes.Nodes.Add(new FbxNode("Current", takeName));
 
         var take = new FbxNode("Take", takeName);
         take.Nodes.Add(new FbxNode("FileName", takeName + ".tak"));
@@ -551,7 +659,6 @@ public static class FbxAnimationWriter
         take.Nodes.Add(reference);
 
         takes.Nodes.Add(take);
-        document.Nodes.Add(takes);
     }
 
     internal static FbxNode EnsureProperties70(FbxNode node)

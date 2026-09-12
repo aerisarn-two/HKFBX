@@ -93,13 +93,22 @@ public static class FbxAnimationReader
     /// to be understood. A bone with no curves holds its rest pose, which is
     /// what an exporter that keys only the bones it moved leaves behind.
     /// </remarks>
+    /// <param name="takeName">
+    /// Which stack to read, when the document holds more than one. Null reads every
+    /// curve in the scene, which is right for a document with a single stack and
+    /// wrong for a document with several: their curves sit on the same properties
+    /// of the same nodes, so reading them all takes whichever the walk reaches last
+    /// and silently blends the clips. A name that matches no stack reads nothing.
+    /// </param>
     public static SampledAnimation ReadAnimation(
-        FbxDocument document, Skeleton skeleton, int? frameCount = null, float? frameDuration = null)
+        FbxDocument document, Skeleton skeleton, int? frameCount = null, float? frameDuration = null,
+        string? takeName = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(skeleton);
 
         var scene = new FbxScene(document);
+        HashSet<long>? wanted = takeName is null ? null : CurveNodesOf(scene, takeName);
 
         var models = SkeletonModels(scene)
             .GroupBy(m => BoneNames.Unsanitize(m.Name))
@@ -116,6 +125,7 @@ public static class FbxAnimationReader
             {
                 if (source.Class != "AnimationCurveNode") continue;
                 if (property is not ("Lcl Translation" or "Lcl Rotation" or "Lcl Scaling")) continue;
+                if (wanted is not null && !wanted.Contains(source.Id)) continue;
 
                 var curves = new Curve[3];
 
@@ -334,6 +344,47 @@ public static class FbxAnimationReader
         ArgumentNullException.ThrowIfNull(document);
 
         return new FbxScene(document).OfClass("AnimationStack").FirstOrDefault()?.Name ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Every stack in the document, in the order it holds them — one clip each.
+    /// </summary>
+    public static IReadOnlyList<string> ReadTakeNames(FbxDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return new FbxScene(document).OfClass("AnimationStack").Select(stack => stack.Name).ToList();
+    }
+
+    /// <summary>
+    /// The curve nodes one stack owns, found through its layers.
+    /// </summary>
+    /// <remarks>
+    /// A stack does not reach its curve nodes directly. The chain is curve node →
+    /// layer → stack, as object-to-object edges, so this walks it backwards: the
+    /// layers whose parent is the stack, then the curve nodes whose parent is one of
+    /// those layers.
+    /// </remarks>
+    private static HashSet<long> CurveNodesOf(FbxScene scene, string takeName)
+    {
+        var nodes = new HashSet<long>();
+
+        foreach (FbxObject stack in scene.OfClass("AnimationStack"))
+        {
+            if (!string.Equals(stack.Name, takeName, StringComparison.Ordinal))
+                continue;
+
+            foreach (FbxObject layer in scene.ChildrenOf(stack.Id))
+            {
+                if (layer.Class != "AnimationLayer") continue;
+
+                foreach (FbxObject node in scene.ChildrenOf(layer.Id))
+                    if (node.Class == "AnimationCurveNode")
+                        nodes.Add(node.Id);
+            }
+        }
+
+        return nodes;
     }
 
     /// <summary>

@@ -189,6 +189,23 @@ namespace HKFBX.Fbx
 
         public string Flags => _node.Properties.Count > 3 ? _node.Properties[3] as string ?? string.Empty : string.Empty;
 
+        /// <summary>
+        /// Changes the property's flags, leaving its type and values alone.
+        /// </summary>
+        /// <remarks>
+        /// The flags are the fourth item of the preamble, and a property written
+        /// without them has none to change — a three-item preamble is legal and a
+        /// reader supplies the default. So the item is added where it is missing.
+        /// </remarks>
+        public void SetFlags(string flags)
+        {
+            while (_node.Properties.Count < 3)
+                _node.Properties.Add(string.Empty);
+
+            if (_node.Properties.Count > 3) _node.Properties[3] = flags;
+            else _node.Properties.Add(flags);
+        }
+
         /// <summary>The property's values, i.e. everything after the four-item preamble.</summary>
         public IReadOnlyList<object?> Values =>
             _node.Properties.Count > 4 ? _node.Properties.Skip(4).ToList() : [];
