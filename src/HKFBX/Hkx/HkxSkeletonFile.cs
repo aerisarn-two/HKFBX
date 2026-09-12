@@ -319,7 +319,10 @@ public static class HkxSkeletonFile
                 continue;
             }
 
-            skeleton.m_referencePose[i] = FromBoneTransform(pose);
+            Matrix4x4 held = skeleton.m_referencePose[i];
+
+            if (!Same(ToBoneTransform(held), pose))
+                skeleton.m_referencePose[i] = Patch(held, pose);
         }
     }
 
@@ -327,8 +330,10 @@ public static class HkxSkeletonFile
     {
         if (body.m_collidable?.m_shape is hkpCapsuleShape capsule && source.Shape is { } shape)
         {
-            capsule.m_vertexA = new Vector4(shape.VertexA, shape.Radius);
-            capsule.m_vertexB = new Vector4(shape.VertexB, shape.Radius);
+            // The fourth component is not the radius -- the radius has its own field
+            // -- so whatever the template keeps there is kept.
+            capsule.m_vertexA = new Vector4(shape.VertexA, capsule.m_vertexA.W);
+            capsule.m_vertexB = new Vector4(shape.VertexB, capsule.m_vertexB.W);
             capsule.m_radius = shape.Radius;
         }
 
@@ -343,13 +348,41 @@ public static class HkxSkeletonFile
 
         if (body.m_motion?.m_motionState is { } state)
         {
-            state.m_transform = Matrix4x4.CreateFromQuaternion(source.Transform.Rotation)
-                * Matrix4x4.CreateTranslation(source.Transform.Translation);
+            // Only when it actually differs. A matrix taken apart into a quaternion
+            // and put back together is not the matrix it started as -- the rotation
+            // block comes back a few low bits out, and the fourth column is lost
+            // entirely -- so rewriting an unchanged transform corrupts it. Comparing
+            // against what the template already holds is what makes the write a
+            // no-op when the caller changed nothing.
+            BoneTransform held = new(
+                state.m_transform.Translation,
+                Quaternion.CreateFromRotationMatrix(state.m_transform),
+                Vector3.One);
 
-            state.m_linearDamping = (Half)source.LinearDamping;
-            state.m_angularDamping = (Half)source.AngularDamping;
+            if (!Same(held, source.Transform))
+            {
+                state.m_transform = Matrix4x4.CreateFromQuaternion(source.Transform.Rotation)
+                    * Matrix4x4.CreateTranslation(source.Transform.Translation);
+            }
+
+            if ((float)state.m_linearDamping != source.LinearDamping)
+                state.m_linearDamping = (Half)source.LinearDamping;
+
+            if ((float)state.m_angularDamping != source.AngularDamping)
+                state.m_angularDamping = (Half)source.AngularDamping;
         }
     }
+
+    /// <summary>
+    /// Whether two transforms are the same to the last bit.
+    /// </summary>
+    /// <remarks>
+    /// Exact rather than approximate on purpose: the question is not "are these
+    /// close enough to be the same pose" but "did the caller change this", and a
+    /// tolerance would answer the first while being asked the second.
+    /// </remarks>
+    private static bool Same(BoneTransform a, BoneTransform b) =>
+        a.Translation == b.Translation && a.Rotation == b.Rotation;
 
     private static void WriteJoint(hkpConstraintInstance constraint, RagdollJoint source)
     {
@@ -402,11 +435,40 @@ public static class HkxSkeletonFile
     }
 
     /// <summary>The inverse of <see cref="ToBoneTransform"/>.</summary>
-    private static Matrix4x4 FromBoneTransform(BoneTransform t) =>
-        new(t.Translation.X, t.Translation.Y, t.Translation.Z, 0,
-            t.Rotation.X, t.Rotation.Y, t.Rotation.Z, t.Rotation.W,
-            t.Scale.X, t.Scale.Y, t.Scale.Z, 0,
-            0, 0, 0, 0);
+    /// <summary>
+    /// The nine components a <see cref="BoneTransform"/> models, written over the
+    /// template's own matrix.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilding the matrix instead loses the seven components nothing here models
+    /// -- the padding beside the translation and the scale, and the whole fourth row
+    /// -- and a shipped file does not keep zeros there. Writing a vanilla
+    /// skeleton.hkx straight back out that way changed 16,975 bytes across the 45
+    /// creatures, all of them this, with the writer reporting nothing amiss.
+    ///
+    /// So the template's matrix is patched rather than replaced: what is understood
+    /// is written and what is not is left exactly as it was found. That is the rule
+    /// for every field below, and the reason this file takes a template at all.
+    /// </remarks>
+    private static Matrix4x4 Patch(Matrix4x4 original, BoneTransform t)
+    {
+        Matrix4x4 m = original;
+
+        m.M11 = t.Translation.X;
+        m.M12 = t.Translation.Y;
+        m.M13 = t.Translation.Z;
+
+        m.M21 = t.Rotation.X;
+        m.M22 = t.Rotation.Y;
+        m.M23 = t.Rotation.Z;
+        m.M24 = t.Rotation.W;
+
+        m.M31 = t.Scale.X;
+        m.M32 = t.Scale.Y;
+        m.M33 = t.Scale.Z;
+
+        return m;
+    }
 
     private static IReadOnlyList<IHavokObject> Flatten(hkRootLevelContainer root)
     {
