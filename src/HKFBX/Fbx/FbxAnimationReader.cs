@@ -190,7 +190,20 @@ public static class FbxAnimationReader
     /// animator has moved the root in. A root that merely sits at its rest pose
     /// comes back empty rather than as a run of identical keys.
     /// </remarks>
-    public static RootMotion ReadRootMotion(FbxDocument document, Skeleton skeleton)
+    public static RootMotion ReadRootMotion(FbxDocument document, Skeleton skeleton) =>
+        ReadRootMotion(document, skeleton, null);
+
+    /// <summary>
+    /// The travel the root bone carries in one clip.
+    /// </summary>
+    /// <param name="takeName">
+    /// Which stack to read, when the document holds more than one. Every clip
+    /// drives the same root node on the same two properties, so without a name
+    /// this takes whichever curve node the walk reaches first and reports one
+    /// clip's travel as another's. Null is right for a document with a single
+    /// stack. A name that matches no stack reads nothing.
+    /// </param>
+    public static RootMotion ReadRootMotion(FbxDocument document, Skeleton skeleton, string? takeName)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(skeleton);
@@ -199,14 +212,15 @@ public static class FbxAnimationReader
         if (root < 0) return RootMotion.None;
 
         var scene = new FbxScene(document);
+        HashSet<long>? wanted = takeName is null ? null : CurveNodesOf(scene, takeName);
 
         FbxObject? model = SkeletonModels(scene)
             .FirstOrDefault(m => BoneNames.Unsanitize(m.Name) == skeleton.Bones[root].Name);
 
         if (model is null) return RootMotion.None;
 
-        Curve[]? translation = ChannelOf(scene, model, "Lcl Translation");
-        Curve[]? rotation = ChannelOf(scene, model, "Lcl Rotation");
+        Curve[]? translation = ChannelOf(scene, model, "Lcl Translation", wanted);
+        Curve[]? rotation = ChannelOf(scene, model, "Lcl Rotation", wanted);
 
         if (translation is null && rotation is null) return RootMotion.None;
 
@@ -244,11 +258,24 @@ public static class FbxAnimationReader
     /// The events the document carries, from the enum channels the writer puts
     /// them on.
     /// </summary>
-    public static IReadOnlyList<AnnotationTrack> ReadEvents(FbxDocument document)
+    public static IReadOnlyList<AnnotationTrack> ReadEvents(FbxDocument document) =>
+        ReadEvents(document, null);
+
+    /// <summary>
+    /// The events one clip carries.
+    /// </summary>
+    /// <param name="takeName">
+    /// Which stack to read, when the document holds more than one. Event
+    /// channels sit on the same nodes whichever clip they belong to, so without
+    /// a name a creature's whole set comes back as one clip's annotations. Null
+    /// is right for a document with a single stack.
+    /// </param>
+    public static IReadOnlyList<AnnotationTrack> ReadEvents(FbxDocument document, string? takeName)
     {
         ArgumentNullException.ThrowIfNull(document);
 
         var scene = new FbxScene(document);
+        HashSet<long>? wanted = takeName is null ? null : CurveNodesOf(scene, takeName);
         var tracks = new List<AnnotationTrack>();
 
         foreach (FbxObject model in SkeletonModels(scene))
@@ -257,6 +284,7 @@ public static class FbxAnimationReader
             {
                 if (source.Class != "AnimationCurveNode") continue;
                 if (!property.StartsWith("hkEvents", StringComparison.Ordinal)) continue;
+                if (wanted is not null && !wanted.Contains(source.Id)) continue;
 
                 // The texts live in the enum's value list, which follows the
                 // current index rather than replacing it.
@@ -293,10 +321,12 @@ public static class FbxAnimationReader
         return tracks;
     }
 
-    private static Curve[]? ChannelOf(FbxScene scene, FbxObject model, string property)
+    private static Curve[]? ChannelOf(
+        FbxScene scene, FbxObject model, string property, HashSet<long>? wanted = null)
     {
         FbxObject? node = scene.PropertyConnectionsTo(model.Id)
-            .Where(c => c.Property == property && c.Source.Class == "AnimationCurveNode")
+            .Where(c => c.Property == property && c.Source.Class == "AnimationCurveNode"
+                && (wanted is null || wanted.Contains(c.Source.Id)))
             .Select(c => c.Source)
             .FirstOrDefault();
 
