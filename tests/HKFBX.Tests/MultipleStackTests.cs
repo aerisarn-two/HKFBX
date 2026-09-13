@@ -117,6 +117,42 @@ public sealed class MultipleStackTests
         Assert.True(FbxAnimationReader.ReadRootMotion(document, skeleton, "crawl").IsEmpty);
     }
 
+    /// <summary>
+    /// The same for events, which sit on the same nodes whichever clip they
+    /// belong to.
+    /// </summary>
+    [Fact]
+    public void EventsAreReadPerClipRatherThanAllAtOnce()
+    {
+        Skeleton skeleton = Synthetic.Skeleton();
+
+        static AnnotationTrack Track(params string[] texts) => new()
+        {
+            Name = "Root",
+            Events = [.. texts.Select((text, i) => new AnimationEvent(0.1f * (i + 1), text))],
+        };
+
+        FbxDocument document = FbxAnimationWriter.Build(
+            skeleton,
+            Synthetic.Animation() with { Annotations = [Track("walkStart", "walkStop")] },
+            "walk");
+
+        FbxAnimationWriter.AddStack(
+            document, skeleton,
+            Synthetic.Animation() with { Annotations = [Track("runStart")] },
+            "run");
+
+        Assert.Equal(
+            ["walkStart", "walkStop"],
+            FbxAnimationReader.ReadEvents(document, "walk").SelectMany(t => t.Events).Select(e => e.Text));
+
+        Assert.Equal(
+            ["runStart"],
+            FbxAnimationReader.ReadEvents(document, "run").SelectMany(t => t.Events).Select(e => e.Text));
+
+        Assert.Empty(FbxAnimationReader.ReadEvents(document, "crawl"));
+    }
+
     [Fact]
     public void NamingNoStackReadsNoCurves()
     {

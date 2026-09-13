@@ -534,10 +534,25 @@ public static class FbxAnimationWriter
             AnnotationTrack track = tracks[i];
             if (track.Events.Count == 0) continue;
 
+            string property = EventPropertyName(track.Name, i);
+
             // Distinct texts become the enum's values; a key then only has to
             // name an index.
-            var texts = track.Events.Select(e => e.Text).Distinct().ToList();
-            string property = EventPropertyName(track.Name, i);
+            //
+            // Merged with whatever is already there rather than replacing it,
+            // because the property belongs to the node and a document holds one
+            // stack per clip: a creature's second clip announces on the same
+            // enum as its first. Replacing the list leaves the first clip's
+            // curves indexing into the second clip's words -- a walk whose
+            // footfalls come back reading "runStart", or reading nothing at all
+            // where the index runs past the shorter list. Appending keeps every
+            // entry at the position it already had, so only this clip's own keys
+            // need the merged list.
+            var texts = Texts(properties, property);
+
+            foreach (string text in track.Events.Select(e => e.Text))
+                if (!texts.Contains(text, StringComparer.Ordinal))
+                    texts.Add(text);
 
             properties.Set(property, "enum", "", "A+", 0, string.Join('~', texts));
 
@@ -566,6 +581,11 @@ public static class FbxAnimationWriter
     /// The property an annotation track is written to. Prefixed the way ck-cmd
     /// prefixes them, and made unique when a track has no name of its own.
     /// </summary>
+    /// <summary>The words an event enum already offers, in their own order.</summary>
+    private static List<string> Texts(FbxProperties properties, string name) =>
+        [.. (properties.GetValues(name).OfType<string>().LastOrDefault() ?? string.Empty)
+            .Split('~', StringSplitOptions.RemoveEmptyEntries)];
+
     internal static string EventPropertyName(string trackName, int index)
     {
         string name = new string((trackName ?? string.Empty)
