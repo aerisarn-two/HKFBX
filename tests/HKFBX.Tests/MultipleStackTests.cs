@@ -79,6 +79,44 @@ public sealed class MultipleStackTests
         Assert.True(run[6, 0].Translation.X > walk[6, 0].Translation.X);
     }
 
+    /// <summary>
+    /// A creature's clips all drive the same root node on the same two
+    /// properties, so the travel has to be asked for by clip.
+    /// </summary>
+    [Fact]
+    public void RootMotionIsReadPerClipRatherThanWhicheverComesFirst()
+    {
+        Skeleton skeleton = Synthetic.Skeleton();
+
+        static RootMotion Travelling(float distance) => new()
+        {
+            Duration = 1f,
+            Translations =
+            [
+                new TranslationKey(0f, Vector3.Zero),
+                new TranslationKey(1f, new Vector3(0f, -distance, 0f)),
+            ],
+        };
+
+        // 31 frames at 1/30s is exactly one second, so the last frame samples the
+        // motion at its end rather than one frame short of it.
+        FbxDocument document = FbxAnimationWriter.Build(
+            skeleton, Synthetic.Animation(frames: 31) with { RootMotion = Travelling(20f) }, "walk");
+
+        FbxAnimationWriter.AddStack(
+            document, skeleton,
+            Synthetic.Animation(frames: 31) with { RootMotion = Travelling(200f) }, "run");
+
+        Assert.Equal(-20f,
+            FbxAnimationReader.ReadRootMotion(document, skeleton, "walk").Translations[^1].Value.Y, 3);
+        Assert.Equal(-200f,
+            FbxAnimationReader.ReadRootMotion(document, skeleton, "run").Translations[^1].Value.Y, 3);
+
+        // And a name that names no stack finds no travel, rather than the first
+        // clip's.
+        Assert.True(FbxAnimationReader.ReadRootMotion(document, skeleton, "crawl").IsEmpty);
+    }
+
     [Fact]
     public void NamingNoStackReadsNoCurves()
     {

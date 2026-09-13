@@ -474,14 +474,25 @@ public static class FbxAnimationWriter
     }
 
     /// <summary>
-    /// Drops the translation and rotation channels already written for a model,
-    /// so root motion can take their place.
+    /// Drops the translation and rotation channels this clip has written for a
+    /// model, so its root motion can take their place.
     /// </summary>
+    /// <remarks>
+    /// This clip's, and no other's. A document holds one stack per clip and they
+    /// all drive the same root node, so taking every curve node bound to that
+    /// node took the clips already in the document with it: a creature exported
+    /// with eighteen travelling clips kept the root track of the last one and no
+    /// other, and seventeen animations came back standing still. The list passed
+    /// in is what this clip wrote, which is exactly the set that may be replaced.
+    /// </remarks>
     private static void RemoveChannels(FbxScene scene, List<FbxObject> curveNodes, FbxObject model)
     {
+        var mine = curveNodes.Select(n => n.Id).ToHashSet();
+
         var bound = scene.PropertyConnectionsTo(model.Id)
             .Where(c => c.Property is "Lcl Translation" or "Lcl Rotation")
             .Select(c => c.Source)
+            .Where(source => mine.Contains(source.Id))
             .ToList();
 
         foreach (FbxObject node in bound)
