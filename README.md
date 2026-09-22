@@ -71,6 +71,23 @@ All 48 ragdolls the game ships survive that chain. Positions, capsule shapes and
 joint limits come back exactly; rotations come back within a fiftieth of a degree,
 which is the floor of storing an orientation as three Euler angles.
 
+`HkxSkeletonFile.Write` edits a template by name, which keeps every value nothing
+here models -- motion states, broad phase handles, constraint atoms -- and stops at
+its structure: a bone or a body the template has not got is not created, because the
+counts are what the skeleton mappers, the ragdoll instance and every index in the file
+are built over. A creature with a **rig of its own** needs the structure rebuilt, and
+that is `HkxSkeletonBuilder`:
+
+```csharp
+HkxSkeletonBuilder.Write(template, ownRig, @"skeleton.hkx");
+```
+
+The two skeletons, the bodies, the joints, the mappers, the ragdoll instance and the
+resource tree are written from the new rig; everything else is a deep clone of one of
+the template's objects with the modelled values written over it, so a creature rebuilt
+over its own file comes back the same object for object -- checked over all 45 of the
+game's ragdolls, by type census as well as by value.
+
 ### What is native, and what is a property
 
 Everything FBX has a word for is written as FBX. A bone is a node, a body is a
