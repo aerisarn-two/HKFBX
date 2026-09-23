@@ -369,6 +369,30 @@ same way. A straight walk read for turn comes back with tens of degrees a second
 of nonsense, because a foot passing from front to back at a lateral offset sweeps
 an angle about the root. A turn is authored instead.
 
+## Putting a rig on the ground
+
+A Skyrim creature is authored standing on the origin: its root bone is at it and
+its lowest bone is on it. All 52 of the game's creature skeletons have their
+lowest bone at or below one unit, and not one above it.
+
+A rig authored for another engine usually is not. A Biped from 3ds Max is built
+around its pelvis, so its root *is* the pelvis and the character hangs below the
+floor by the length of its legs. A skeleton bought from a marketplace has its
+root half a unit above the origin and its toes 37.5 below, and imported as it
+stands it is a creature buried to the waist.
+
+```csharp
+GroundedSkeleton grounded = SkeletonGrounding.Ground(rig);
+// raised 37.5 units off 'Bip01_L_Toe0', under a root of its own
+```
+
+Lifting the old root's rest pose does not fix it, because an animation drives
+that root and overrides its rest. So the lift goes on a bone nothing animates: a
+root at the origin, which is what root motion moves, and under it a bone holding
+the lift, and under that the rig as it was. Every clip then plays where it always
+did, a whole creature's height further up, and nothing in the animations has to
+be touched.
+
 ## Events
 
 An animation announces events as it plays — a footstep, a hit, the end of a clip
