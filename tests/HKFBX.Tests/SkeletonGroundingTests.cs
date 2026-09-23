@@ -103,4 +103,73 @@ public sealed class SkeletonGroundingTests
 
         Assert.Equal(0f, SkeletonGrounding.Ground(standing).Lift, 3);
     }
+
+    /// <summary>
+    /// A rig built facing the wrong way and standing off to one side is put where Skyrim
+    /// expects it, and all of it goes on the bone nothing animates.
+    /// </summary>
+    [Fact]
+    public void ARigCanBeCentredAndTurnedAsWellAsRaised()
+    {
+        // A creature facing -Y, standing 40 units along +Y from its own origin, feet 10 down.
+        var rig = new Skeleton
+        {
+            Name = "bought",
+            Bones =
+            [
+                new Bone("Bip01", -1, new BoneTransform(new Vector3(0, 40, 0), Quaternion.Identity, Vector3.One)),
+                new Bone("Ankle", 0, new BoneTransform(new Vector3(0, 0, -10), Quaternion.Identity, Vector3.One)),
+                new Bone("Toe", 1, new BoneTransform(new Vector3(0, -4, 0), Quaternion.Identity, Vector3.One)),
+            ],
+        };
+
+        // The toe is behind the ankle, so it faces -Y and wants turning half a turn.
+        float turn = SkeletonGrounding.TurnToFaceForward(rig, ("Ankle", "Toe"));
+        Assert.Equal(180f, Math.Abs(turn), 1);
+
+        GroundedSkeleton done = SkeletonGrounding.Ground(rig, centre: true, turnDegrees: turn);
+
+        Assert.Equal(10f, done.Lift, 3);
+        Assert.Equal("Ankle", done.Lowest);
+        Assert.Equal(-40f, done.Shift.Y, 3);
+
+        Vector3[] now = Standing(done.Rig);
+        int ankle = Index(done.Rig, "Ankle"), toe = Index(done.Rig, "Toe"), root = Index(done.Rig, "Bip01");
+
+        // It stands on the origin, over it, and the toe is now in front.
+        Assert.Equal(0f, now[ankle].Z, 3);
+        Assert.Equal(0f, now[root].X, 3);
+        Assert.Equal(0f, now[root].Y, 3);
+        Assert.True(now[toe].Y > now[ankle].Y, "the toe should now be in front of the ankle");
+
+        // Measured again it wants no further turning.
+        Assert.Equal(0f, SkeletonGrounding.TurnToFaceForward(done.Rig, ("Ankle", "Toe")), 1);
+
+        // And nothing below the lift was touched: every original bone keeps its rest pose.
+        foreach (Bone was in rig.Bones)
+            Assert.Equal(was.ReferencePose, done.Rig.Bones[Index(done.Rig, was.Name)].ReferencePose);
+    }
+
+    private static int Index(Skeleton rig, string name)
+    {
+        for (int i = 0; i < rig.Count; i++) if (rig.Bones[i].Name == name) return i;
+        return -1;
+    }
+
+    private static Vector3[] Standing(Skeleton rig)
+    {
+        var world = new Matrix4x4[rig.Count];
+        var places = new Vector3[rig.Count];
+        for (int i = 0; i < rig.Count; i++)
+        {
+            BoneTransform rest = rig.Bones[i].ReferencePose;
+            Matrix4x4 local = Matrix4x4.CreateScale(rest.Scale)
+                * Matrix4x4.CreateFromQuaternion(rest.Rotation)
+                * Matrix4x4.CreateTranslation(rest.Translation);
+            int parent = rig.Bones[i].ParentIndex;
+            world[i] = parent < 0 ? local : local * world[parent];
+            places[i] = world[i].Translation;
+        }
+        return places;
+    }
 }
