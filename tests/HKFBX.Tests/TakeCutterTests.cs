@@ -62,17 +62,21 @@ public sealed class TakeCutterTests
     }
 
     /// <summary>
-    /// A clip list where each end is the next start gives two neighbours one pose in
-    /// common, which is what a looping clip wants and what a one-shot needs to finish
-    /// on the pose it was drawn finishing on.
+    /// Two neighbours can be made to share the pose they meet on, which is what a take
+    /// that runs continuously through the boundary wants. It has to be asked for: on a
+    /// list whose clips touch, the frame they meet on belongs to the second by default,
+    /// because a take with the clips merely laid end to end has a different animation
+    /// starting there and the first would finish on a pose out of it.
     /// </summary>
     [Fact]
-    public void NeighboursShareTheFrameTheyMeetOn()
+    public void NeighboursCanBeMadeToShareTheFrameTheyMeetOn()
     {
         FbxDocument document = OneTake(out Skeleton skeleton);
         SampledAnimation whole = FbxAnimationReader.ReadAnimation(document, skeleton, takeName: "Take 001");
 
-        FbxTakeCutter.Cut(document, [new TakeCut("first", 0, 10), new TakeCut("second", 10, 20)], rig: skeleton);
+        FbxTakeCutter.Cut(
+            document, [new TakeCut("first", 0, 10), new TakeCut("second", 10, 20)],
+            rig: skeleton, endIsInside: true);
 
         SampledAnimation first = FbxAnimationReader.ReadAnimation(document, skeleton, takeName: "first");
         SampledAnimation second = FbxAnimationReader.ReadAnimation(document, skeleton, takeName: "second");
@@ -106,5 +110,68 @@ public sealed class TakeCutterTests
         CutReport report = FbxTakeCutter.Cut(document, [new TakeCut("tail", 15, 99)], rig: skeleton);
 
         Assert.Equal(5, Assert.Single(report.Cuts).Frames);
+    }
+
+    /// <summary>
+    /// A cut list whose clips touch is half-open, and reading it as inclusive gives every
+    /// clip one frame belonging to the animation that follows it.
+    /// </summary>
+    [Fact]
+    public void ACutListWhoseClipsTouchIsReadAsHalfOpen()
+    {
+        Assert.True(FbxTakeCutter.Touching(
+            [new TakeCut("A", 0, 10), new TakeCut("B", 10, 20), new TakeCut("C", 20, 30)]));
+
+        // One apart is the other convention, where the end frame is this clip's last.
+        Assert.False(FbxTakeCutter.Touching(
+            [new TakeCut("A", 0, 9), new TakeCut("B", 10, 19), new TakeCut("C", 20, 29)]));
+
+        Assert.False(FbxTakeCutter.Touching([new TakeCut("A", 0, 10)]));
+    }
+
+    /// <summary>
+    /// The frames themselves: a touching list gives each clip the frames up to but not
+    /// including its end, so no two clips share a pose.
+    /// </summary>
+    [Fact]
+    public void ATouchingListGivesNoTwoClipsAPoseInCommon()
+    {
+        FbxDocument document = OneTake(out Skeleton skeleton, frames: 30);
+
+        CutReport report = FbxTakeCutter.Cut(
+            document,
+            [new TakeCut("A", 0, 10), new TakeCut("B", 10, 20), new TakeCut("C", 20, 30)],
+            rig: skeleton);
+
+        Assert.False(report.EndIsInside);
+        Assert.Equal([10, 10, 10], report.Cuts.Select(c => c.Frames));
+        Assert.Empty(report.Refused);
+
+        // Read as inclusive instead, each clip takes one frame more -- the one the next
+        // clip starts on.
+        CutReport inclusive = FbxTakeCutter.Cut(
+            document,
+            [new TakeCut("A", 0, 10), new TakeCut("B", 10, 20), new TakeCut("C", 20, 30)],
+            rig: skeleton,
+            endIsInside: true);
+
+        Assert.True(inclusive.EndIsInside);
+        Assert.Equal([11, 11, 10], inclusive.Cuts.Select(c => c.Frames));
+    }
+
+    /// <summary>
+    /// A list whose clips do not touch keeps its end frames, which is what that convention
+    /// means and what a single cut out of the middle of a take needs.
+    /// </summary>
+    [Fact]
+    public void AListWhoseClipsDoNotTouchKeepsItsEndFrames()
+    {
+        FbxDocument document = OneTake(out Skeleton skeleton, frames: 30);
+
+        CutReport report = FbxTakeCutter.Cut(
+            document, [new TakeCut("A", 0, 9), new TakeCut("B", 10, 19)], rig: skeleton);
+
+        Assert.True(report.EndIsInside);
+        Assert.Equal([10, 10], report.Cuts.Select(c => c.Frames));
     }
 }
