@@ -334,6 +334,41 @@ passes over it, and leaving it keeps the source of every cut in the same file as
 the cuts. A cut naming frames the take has not got is refused by name; one that
 merely overruns the end is trimmed to it.
 
+## Reading travel off the feet
+
+An animation made for an engine that moves the actor in code carries no root
+motion. A skeleton bought from a marketplace travels 0.33 units over its whole
+walk cycle and 10 over its run, which is hip sway, not locomotion. Skyrim moves
+an actor from the animation cache's movement block alone, so such a clip imported
+as it stands is a creature that slides along without walking.
+
+The animation does say how fast it means to go, though, just not where anyone
+thought to look. A foot on the ground does not move; the world moves past it. So
+in an in-place cycle the planted foot slides *backwards* relative to the root at
+exactly the speed the creature should be travelling forwards, and the mirror of
+that slide is the travel the clip wants.
+
+```csharp
+InferredMotion? motion = FootMotion.Infer(clip, rig, ["Bip01_L_Toe0", "Bip01_R_Toe0"]);
+// 70.9 units a second at 179 degrees, from 24 planted frames
+```
+
+Which foot is planted is read the same way: the lowest one, and only while it is
+near the lowest that foot gets in this clip. The frame a creature changes feet is
+counted as planted and left out of the travel, because the distance between a
+foot in the air and the same foot on the ground is the step it took, not the
+ground going past.
+
+`Confidence` is how much of the clip had a foot down. A walk reads near 1 and an
+idle exactly 0 travel at 1; a run reads a little under, having a flight phase; a
+jump reads low, and that is the answer — the speed it also returns means nothing.
+
+**Only travel, never turn.** One planted foot cannot tell a creature walking
+forward from one turning about a distant centre, since both slide the foot the
+same way. A straight walk read for turn comes back with tens of degrees a second
+of nonsense, because a foot passing from front to back at a lateral offset sweeps
+an angle about the root. A turn is authored instead.
+
 ## Events
 
 An animation announces events as it plays — a footstep, a hit, the end of a clip
