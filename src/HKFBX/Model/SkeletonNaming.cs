@@ -167,45 +167,75 @@ public static class SkeletonNaming
         var chain = Chain(rig);
         if (chain.Count == 0) return map;
 
-        // From the bottom: the pelvis's own children are the spine.
-        string[] up = ["NPC Spine [Spn0]", "NPC Spine1 [Spn1]", "NPC Spine2 [Spn2]"];
-        // From the top: the last bone is the head, whatever it was called, unless the rig
-        // carries a magic node above it.
-        string[] down = hasMagicNode
+        // Which link is the game's Spine2 is not a matter of counting, because a biped's spine
+        // is as long as its author wanted. It is a matter of where the arms are: in Skyrim the
+        // clavicles hang off NPC Spine2 [Spn2] and nothing else, so whichever link this rig
+        // hangs its arms from is that bone, whatever the exporter numbered it.
+        int shoulder = chain.FindIndex(link => Bears(rig, link));
+
+        // Failing that -- a rig with no arms, or arms somewhere unexpected -- the three spine
+        // links are counted up from the bottom, which is right whenever the spine is the
+        // length the game's is.
+        if (shoulder < 0) shoulder = Math.Min(2, chain.Count - 1);
+
+        string[] below = ["NPC Spine2 [Spn2]", "NPC Spine1 [Spn1]", "NPC Spine [Spn0]"];
+        for (int i = 0; i < below.Length && shoulder - i >= 0; i++)
+            map[chain[shoulder - i].Name] = below[i];
+
+        // Above the shoulders the names are laid from the top down, since the last bone is the
+        // head -- or the node above it -- whatever the exporter called it. A rig with more
+        // links up there than names leaves the surplus named as it came.
+        string[] above = hasMagicNode
             ? ["NPC Head MagicNode [Hmag]", "NPC Head [Head]", "NPC Neck [Neck]"]
             : ["NPC Head [Head]", "NPC Neck [Neck]"];
 
-        int names = Math.Min(chain.Count, up.Length + down.Length);
-        int fromBelow = Math.Min(up.Length, Math.Max(0, names - down.Length));
-        int fromAbove = names - fromBelow;
-
-        for (int i = 0; i < fromBelow; i++) map[chain[i].Name] = up[i];
-        for (int i = 0; i < fromAbove; i++) map[chain[chain.Count - 1 - i].Name] = down[i];
+        for (int i = 0; i < above.Length && chain.Count - 1 - i > shoulder; i++)
+            map[chain[chain.Count - 1 - i].Name] = above[i];
 
         return map;
     }
 
+    /// <summary>Whether a bone carries an arm, which is what makes it the game's Spine2.</summary>
+    private static bool Bears(Skeleton rig, Bone link)
+    {
+        int at = rig.Bones.ToList().FindIndex(b => ReferenceEquals(b, link));
+        if (at < 0) return false;
+
+        for (int i = 0; i < rig.Count; i++)
+        {
+            if (rig.Bones[i].ParentIndex != at) continue;
+            string name = rig.Bones[i].Name;
+            if (name.Contains("Clavicle", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("UpperArm", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
-    /// The single line of bones from the pelvis up to the topmost bone above it, stopping
-    /// where the chain forks into the arms.
+    /// The single line of bones from the hips up to the topmost bone above them.
     /// </summary>
+    /// <remarks>
+    /// It starts at the biped's own root rather than at the pelvis, because a 3ds Max biped
+    /// does not run the spine through the pelvis: <c>Bip01_Pelvis</c> and <c>Bip01_Spine</c>
+    /// are both children of <c>Bip01</c>, the pelvis carrying the legs and the spine carrying
+    /// everything else. Walking up from the pelvis finds two thighs and stops.
+    /// </remarks>
     private static List<Bone> Chain(Skeleton rig)
     {
         var chain = new List<Bone>();
-        int pelvis = Index(rig, "Bip01_Pelvis");
-        if (pelvis < 0) pelvis = Index(rig, "NPC Pelvis [Pelv]");
-        if (pelvis < 0) return chain;
+        int at = Index(rig, "Bip01");
+        if (at < 0) at = Index(rig, "NPC COM [COM ]");
+        if (at < 0) at = Index(rig, "Bip01_Pelvis");
+        if (at < 0) at = Index(rig, "NPC Pelvis [Pelv]");
+        if (at < 0) return chain;
 
-        int at = pelvis;
         while (true)
         {
-            var children = new List<int>();
+            var up = new List<int>();
             for (int i = 0; i < rig.Count; i++)
-                if (rig.Bones[i].ParentIndex == at) children.Add(i);
+                if (rig.Bones[i].ParentIndex == at && !IsLimb(rig.Bones[i].Name)) up.Add(i);
 
-            // The legs hang off the pelvis and the arms off a spine link: the chain carries
-            // on through the one child that is not a limb.
-            var up = children.Where(i => !IsLimb(rig.Bones[i].Name)).ToList();
             if (up.Count != 1) break;
 
             at = up[0];
@@ -216,7 +246,8 @@ public static class SkeletonNaming
     }
 
     private static bool IsLimb(string name) =>
-        name.Contains("Thigh", StringComparison.OrdinalIgnoreCase)
+        name.Contains("Pelvis", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("Thigh", StringComparison.OrdinalIgnoreCase)
         || name.Contains("Clavicle", StringComparison.OrdinalIgnoreCase)
         || name.Contains("UpperArm", StringComparison.OrdinalIgnoreCase)
         || name.Contains("Pauldron", StringComparison.OrdinalIgnoreCase);

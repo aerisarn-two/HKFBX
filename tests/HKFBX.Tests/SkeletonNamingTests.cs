@@ -13,15 +13,17 @@ public sealed class SkeletonNamingTests
     /// A 3ds Max biped, as an exporter writes one: the hips at the bottom, a spine of however
     /// many links its author asked for, and the limbs hanging off it.
     /// </summary>
-    private static Skeleton Biped(params string[] chain)
+    private static Skeleton Biped(string arms, params string[] chain)
     {
+        // A 3ds Max biped does not run its spine through the pelvis: Bip01_Pelvis carries the
+        // legs and Bip01_Spine carries everything else, and both hang off Bip01.
         var bones = new List<(string Name, int Parent, float Height)>
         {
             ("Bip01", -1, 60f),
             ("Bip01_Pelvis", 0, 62f),
         };
 
-        int at = 1;
+        int at = 0;
         float height = 70f;
         foreach (string link in chain)
         {
@@ -30,7 +32,6 @@ public sealed class SkeletonNamingTests
             height += 10f;
         }
 
-        int top = at;
         foreach (string side in new[] { "L", "R" })
         {
             bones.Add(($"Bip01_{side}_Thigh", 1, 58f));
@@ -39,8 +40,8 @@ public sealed class SkeletonNamingTests
             int calf = bones.Count - 1;
             bones.Add(($"Bip01_{side}_Foot", calf, 5f));
 
-            // The arms hang off whichever link is two below the top, as a biped's do.
-            int shoulder = Math.Max(1, top - 2);
+            int shoulder = bones.FindIndex(b => b.Name == arms);
+            Assert.True(shoulder >= 0, $"the fixture has no bone called '{arms}'");
             bones.Add(($"Bip01_{side}_Clavicle", shoulder, 95f));
             int clavicle = bones.Count - 1;
             bones.Add(($"Bip01_{side}_UpperArm", clavicle, 92f));
@@ -71,7 +72,8 @@ public sealed class SkeletonNamingTests
     [Fact]
     public void RenamingChangesNamesAndNothingElse()
     {
-        Skeleton rig = Biped("Bip01_Spine", "Bip01_Spine1", "Bip01_Spine2", "Bip01_Neck", "Bip01_Head");
+        Skeleton rig = Biped("Bip01_Spine2",
+            "Bip01_Spine", "Bip01_Spine1", "Bip01_Spine2", "Bip01_Neck", "Bip01_Head");
 
         RenamedSkeleton done = SkeletonNaming.Rename(rig, SkeletonNaming.BipedMap(rig, hasMagicNode: false));
 
@@ -99,7 +101,8 @@ public sealed class SkeletonNamingTests
     [Fact]
     public void ASpineTheLengthOfTheGamesTakesTheGamesNamesInOrder()
     {
-        Skeleton rig = Biped("Bip01_Spine", "Bip01_Spine1", "Bip01_Spine2", "Bip01_Neck", "Bip01_Head");
+        Skeleton rig = Biped("Bip01_Spine2",
+            "Bip01_Spine", "Bip01_Spine1", "Bip01_Spine2", "Bip01_Neck", "Bip01_Head");
         var map = SkeletonNaming.BipedMap(rig, hasMagicNode: false);
 
         Assert.Equal("NPC Spine [Spn0]", map["Bip01_Spine"]);
@@ -117,25 +120,27 @@ public sealed class SkeletonNamingTests
     [Fact]
     public void ALongerSpineKeepsItsSurplusLinkRatherThanMisnamingIt()
     {
-        Skeleton rig = Biped(
+        // The arms hang off Spine4, as the bought skeleton's do.
+        Skeleton rig = Biped("Bip01_Spine4",
             "Bip01_Spine", "Bip01_Spine1", "Bip01_Spine2", "Bip01_Spine4",
             "Bip01_Neck1", "Bip01_Head1", "Bip01_Head2");
 
         var map = SkeletonNaming.BipedMap(rig);
 
-        Assert.Equal("NPC Spine [Spn0]", map["Bip01_Spine"]);
-        Assert.Equal("NPC Spine1 [Spn1]", map["Bip01_Spine1"]);
-        Assert.Equal("NPC Spine2 [Spn2]", map["Bip01_Spine2"]);
+        // Spine4 is where the arms are, so Spine4 is the game's Spine2 and the three links
+        // are counted down from there. The bottom link is the surplus one.
+        Assert.Equal("NPC Spine2 [Spn2]", map["Bip01_Spine4"]);
+        Assert.Equal("NPC Spine1 [Spn1]", map["Bip01_Spine2"]);
+        Assert.Equal("NPC Spine [Spn0]", map["Bip01_Spine1"]);
         Assert.Equal("NPC Neck [Neck]", map["Bip01_Neck1"]);
         Assert.Equal("NPC Head [Head]", map["Bip01_Head1"]);
         Assert.Equal("NPC Head MagicNode [Hmag]", map["Bip01_Head2"]);
 
-        // The fourth spine link is the surplus one, and is not given a name of its own.
-        Assert.False(map.ContainsKey("Bip01_Spine4"));
+        Assert.False(map.ContainsKey("Bip01_Spine"));
 
         RenamedSkeleton done = SkeletonNaming.Rename(rig, map);
-        Assert.Contains("Bip01_Spine4", done.Unmapped);
-        Assert.Contains("Bip01_Spine4", done.Rig.Bones.Select(b => b.Name));
+        Assert.Contains("Bip01_Spine", done.Unmapped);
+        Assert.Contains("Bip01_Spine", done.Rig.Bones.Select(b => b.Name));
 
         // Every name in the renamed rig is still its own.
         Assert.Equal(done.Rig.Count, done.Rig.Bones.Select(b => b.Name).Distinct().Count());
@@ -148,7 +153,7 @@ public sealed class SkeletonNamingTests
     [Fact]
     public void AMapThatCollidesIsRefused()
     {
-        Skeleton rig = Biped("Bip01_Spine", "Bip01_Neck", "Bip01_Head");
+        Skeleton rig = Biped("Bip01_Spine", "Bip01_Spine", "Bip01_Neck", "Bip01_Head");
 
         var clashing = new Dictionary<string, string>
         {
