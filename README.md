@@ -298,6 +298,42 @@ That writes 42 files in about half a minute. Without it a spread of eight goes
 to a temporary directory and is deleted, which keeps a normal run at a couple
 of seconds. Either way it is the test doing it; there is no export tool.
 
+## One take, many clips
+
+An animation is one file per clip in this game and one stack per clip here, but a
+creature bought off a marketplace is usually a single long take with every clip
+laid end to end, and a picture of an editor's clip list saying where each one
+starts and stops. A rig used by an engine that cuts takes for itself — Unity,
+Unreal — never needs them separated in the file at all.
+
+`FbxTakeCutter.Cut` takes that list and makes a stack per clip:
+
+```csharp
+CutReport report = FbxTakeCutter.Cut(document,
+[
+    new TakeCut("Death", 0, 48),
+    new TakeCut("Hit", 48, 98),
+    new TakeCut("Idle", 190, 460),
+]);
+```
+
+The cutting goes through samples, not through the curves. The take is sampled
+once at its own frame rate, each clip is the frames it spans copied out and
+rebased to zero, and each is written back as a stack of its own. Nothing is
+interpolated and no key is moved: a clip's frame *n* holds the pose the take held
+at frame `First + n`, exactly.
+
+Both ends of a cut are part of it. A list where each clip's end is the next one's
+start therefore gives two neighbours one pose in common, which is what a looping
+clip wants and what a one-shot needs if it is to finish on the pose the animator
+drew it finishing on.
+
+The take the cuts came from is left where it is. It carries none of the naming a
+clip needs to be imported as an animation, so whatever reads the document next
+passes over it, and leaving it keeps the source of every cut in the same file as
+the cuts. A cut naming frames the take has not got is refused by name; one that
+merely overruns the end is trimmed to it.
+
 ## Events
 
 An animation announces events as it plays — a footstep, a hit, the end of a clip
