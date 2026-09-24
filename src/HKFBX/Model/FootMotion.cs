@@ -12,11 +12,29 @@ namespace HKFBX.Model;
 /// How much of the clip had a foot planted, from 0 to 1. A walk should be near 1, since
 /// something is always down; a jump or a swim is near 0 and its answer means nothing.
 /// </param>
+/// <summary>A moment a foot came down, and which foot it was.</summary>
+/// <param name="Time">Seconds into the clip.</param>
+/// <param name="Bone">The bone that came down, by the name it was asked for under.</param>
+public readonly record struct FootFall(float Time, string Bone);
+
 public sealed record InferredMotion(
     float Speed, float Heading, int PlantedFrames, float Confidence)
 {
+    /// <summary>
+    /// The moments a foot came down, which is where an animation announces a footstep.
+    /// </summary>
+    /// <remarks>
+    /// The same reading that gives the travel gives these for nothing: the frame the lowest
+    /// foot changes is the frame the other one took the weight. The game's own clips put a
+    /// FootLeft or a FootRight at exactly those moments, spread right across the clip --
+    /// 255 and 252 of them on the draugr alone -- and a creature with none is one that walks
+    /// in silence and leaves no prints.
+    /// </remarks>
+    public IReadOnlyList<FootFall> Falls { get; init; } = [];
+
     public override string ToString() =>
-        $"{Speed:F1} units a second at {Heading:F0} degrees, from {PlantedFrames} planted frames";
+        $"{Speed:F1} units a second at {Heading:F0} degrees, from {PlantedFrames} planted frames" +
+        (Falls.Count == 0 ? "" : $", {Falls.Count} footfalls");
 }
 
 /// <summary>
@@ -104,7 +122,14 @@ public static class FootMotion
         });
 
         var slides = new List<Vector3>();
+        var falls = new List<FootFall>();
         int planted = 0, previous = -1;
+
+        // A foot has to have been in the air before it can land. Without this a creature
+        // standing still announces footsteps: the lowest foot changes whenever the two are
+        // nearly level, which on an idle is a weight shift or the noise in the curves, and
+        // every one of those would read as a step taken.
+        var airborne = tracked.ToDictionary(bone => bone, _ => false);
 
         for (int frame = 1; frame < animation.FrameCount; frame++)
         {
@@ -120,6 +145,13 @@ public static class FootMotion
                 down = bone;
             }
 
+            // Whichever feet are clear of the ground have been in the air, and may land.
+            foreach (int bone in tracked)
+            {
+                float height = (paths[bone][frame].Z + paths[bone][frame - 1].Z) / 2f;
+                if (height > ceiling[bone]) airborne[bone] = true;
+            }
+
             if (down is not { } foot || lowest > ceiling[foot]) { previous = -1; continue; }
 
             planted++;
@@ -128,7 +160,17 @@ public static class FootMotion
             // come down was in the air a frame ago, and the distance between the two is
             // the step it took, not the ground going past. Counted as planted, since it
             // is, and left out of the travel, which it is not part of.
-            if (foot != previous) { previous = foot; continue; }
+            //
+            // It is, however, exactly the moment the foot landed, which is where a clip
+            // announces a footstep.
+            if (foot != previous)
+            {
+                previous = foot;
+
+                if (airborne[foot]) falls.Add(new FootFall(frame * animation.FrameDuration, skeleton.Bones[foot].Name));
+                airborne[foot] = false;
+                continue;
+            }
 
             Vector3 slide = paths[foot][frame] - paths[foot][frame - 1];
             slide.Z = 0f;
@@ -145,7 +187,10 @@ public static class FootMotion
         float speed = seen > 0 ? travel.Length() / seen : 0f;
         float heading = travel.LengthSquared() > 0 ? MathF.Atan2(travel.X, travel.Y) * 180f / MathF.PI : 0f;
 
-        return new InferredMotion(speed, heading, planted, planted / (float)(animation.FrameCount - 1));
+        return new InferredMotion(speed, heading, planted, planted / (float)(animation.FrameCount - 1))
+        {
+            Falls = falls,
+        };
     }
 
     /// <summary>Every bone's place in the world on one frame.</summary>

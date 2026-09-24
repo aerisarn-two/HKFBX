@@ -127,4 +127,33 @@ public sealed class FootMotionTests
     [Fact]
     public void AFootTheRigHasNotGotIsNoAnswerAtAll() =>
         Assert.Null(FootMotion.Infer(InPlaceWalk(31, 3f), Biped(), ["NoSuchBone"]));
+
+    /// <summary>
+    /// The reading that gives the travel gives the footfalls with it: the frame the lowest
+    /// foot changes is the frame the other one took the weight, which is where a clip
+    /// announces a footstep.
+    /// </summary>
+    [Fact]
+    public void TheMomentsAFootLandsComeBackWithTheTravel()
+    {
+        Skeleton rig = Biped();
+        SampledAnimation walk = InPlaceWalk(41, 2f);
+
+        InferredMotion motion = FootMotion.Infer(walk, rig, ["LeftFoot", "RightFoot"])!;
+
+        // Both feet are named, and neither lands twice running.
+        Assert.InRange(motion.Falls.Count, 2, 12);
+        Assert.Contains(motion.Falls, f => f.Bone == "LeftFoot");
+        Assert.Contains(motion.Falls, f => f.Bone == "RightFoot");
+
+        for (int i = 1; i < motion.Falls.Count; i++)
+        {
+            Assert.NotEqual(motion.Falls[i - 1].Bone, motion.Falls[i].Bone);
+            Assert.True(motion.Falls[i].Time > motion.Falls[i - 1].Time, "the falls come in order");
+        }
+
+        Assert.All(motion.Falls, f => Assert.InRange(f.Time, 0f, walk.Duration));
+    }
+
+
 }
