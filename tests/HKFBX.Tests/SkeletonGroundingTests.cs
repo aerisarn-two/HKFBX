@@ -142,6 +142,11 @@ public sealed class SkeletonGroundingTests
         Assert.Equal(0f, now[root].Y, 3);
         Assert.True(now[toe].Y > now[ankle].Y, "the toe should now be in front of the ankle");
 
+        // The one movement is handed back, so that anything else built from the same asset
+        // can be given it: a skinned body that does not get it stands where the asset was
+        // authored while its skeleton stands where the game put it.
+        Assert.Equal(done.Rig.Bones[Index(done.Rig, "Ground")].ReferencePose, done.Correction);
+
         // Measured again it wants no further turning.
         Assert.Equal(0f, SkeletonGrounding.TurnToFaceForward(done.Rig, ("Ankle", "Toe")), 1);
 

@@ -9,8 +9,16 @@ namespace HKFBX.Model;
 /// <param name="RootAdded">Whether a root bone was put at the origin for it.</param>
 /// <param name="Shift">How far it was moved sideways to stand over the origin.</param>
 /// <param name="Turn">How far it was turned, in degrees, to face the way the game faces.</param>
+/// <param name="Correction">
+/// The one movement that carries the rig from where it was authored to where the game wants
+/// it: the sideways move, the turn and the lift, folded together. It sits on the bone nothing
+/// animates, and anything else built from the same asset -- a skinned body, most of all --
+/// has to be given the same one or it stands where the asset was authored while its skeleton
+/// stands where the game put it.
+/// </param>
 public sealed record GroundedSkeleton(
-    Skeleton Rig, float Lift, string Lowest, bool RootAdded, Vector2 Shift = default, float Turn = 0f)
+    Skeleton Rig, float Lift, string Lowest, bool RootAdded, Vector2 Shift = default, float Turn = 0f,
+    BoneTransform Correction = default)
 {
     public override string ToString()
     {
@@ -172,7 +180,8 @@ public static class SkeletonGrounding
             rig.Bones[lowest].Name,
             RootAdded: true,
             shift,
-            turnDegrees);
+            turnDegrees,
+            correction);
     }
 
     /// <summary>Where every bone stands in the rest pose.</summary>
